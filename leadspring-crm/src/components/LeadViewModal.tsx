@@ -1,0 +1,106 @@
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "./StatusBadge";
+import { Lead } from "@/lib/mockData";
+import { Mail, Phone, DollarSign, Calendar, User, Tag } from "lucide-react";
+
+interface LeadViewModalProps {
+  lead: Lead | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+export function LeadViewModal({ lead, open, onOpenChange }: LeadViewModalProps) {
+  if (!lead) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[600px]">
+        <DialogHeader>
+          <DialogTitle className="text-2xl">Lead Details</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-6 py-4">
+          <div className="flex items-start justify-between">
+            <div>
+              <h3 className="text-xl font-semibold">{lead.name}</h3>
+              <div className="flex items-center gap-2 mt-2">
+                <StatusBadge status={lead.status} />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-4">
+            <div className="flex items-center gap-3">
+              <Phone className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <p className="text-sm text-muted-foreground">Phone</p>
+                <p className="font-medium">{lead.phone}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <Mail className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <p className="text-sm text-muted-foreground">Email</p>
+                <p className="font-medium">{lead.email}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <Tag className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <p className="text-sm text-muted-foreground">Source</p>
+                <Badge variant="outline">{lead.source}</Badge>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <DollarSign className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <p className="text-sm text-muted-foreground">Budget</p>
+                <p className="font-medium">{lead.budget}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <User className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <p className="text-sm text-muted-foreground">Assigned To</p>
+                <p className="font-medium">{lead.assignedTo}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <p className="text-sm text-muted-foreground">Created At</p>
+                <p className="font-medium">
+                  {new Date(lead.createdAt).toLocaleString()}
+                </p>
+              </div>
+            </div>
+
+            {lead.updatedAt && (
+              <div className="flex items-center gap-3">
+                <Calendar className="h-4 w-4 text-muted-foreground" />
+                <div>
+                  <p className="text-sm text-muted-foreground">Last Updated</p>
+                  <p className="font-medium">
+                    {new Date(lead.updatedAt).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="border-t pt-4">
+            <h4 className="font-medium mb-2">Notes & Activity</h4>
+            <p className="text-sm text-muted-foreground">
+              No notes available for this lead yet.
+            </p>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

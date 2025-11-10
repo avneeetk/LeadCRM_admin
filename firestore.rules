@@ -1,0 +1,44 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper function
+    function isAdmin() {
+      return request.auth != null &&
+        request.auth.token.email == "admin@leadcrm.com";
+    }
+
+    // Leads collection
+    match /leads/{leadId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Attendance collection
+    match /attendance/{attendanceId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      // Allow all authenticated users to read
+      allow read: if request.auth != null;
+
+      // Only admin can create or delete users
+      allow create, delete: if isAdmin();
+
+      // Users can edit their own profile
+      allow update: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Admin settings (protected)
+    match /admin/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Default deny all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
