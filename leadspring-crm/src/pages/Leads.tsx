@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Eye, Pencil, Plus, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { db } from "@/lib/firebase";
 import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from "firebase/firestore";
@@ -56,13 +57,30 @@ export default function Leads() {
   const [currentPage, setCurrentPage] = useState(1);
   const [leadsPerPage, setLeadsPerPage] = useState(10);
 
+  const [sources, setSources] = useState<any[]>([]);
+  const [purposes, setPurposes] = useState<any[]>([]);
+  const [newSource, setNewSource] = useState("");
+  const [newPurpose, setNewPurpose] = useState("");
+
   // 🔹 Real-time Firestore Sync
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "leads"), (snap) => {
       const data = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Lead[];
       setLeads(data);
     });
-    return () => unsub();
+    // Sources listener
+    const unsubSources = onSnapshot(collection(db, "lead_sources"), (snap) => {
+      setSources(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    // Purposes listener
+    const unsubPurposes = onSnapshot(collection(db, "lead_purposes"), (snap) => {
+      setPurposes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return () => {
+      unsub();
+      unsubSources();
+      unsubPurposes();
+    };
   }, []);
 
   // 🔹 CRUD Ops
@@ -122,8 +140,36 @@ export default function Leads() {
 
   const statuses = ["all", "new", "contacted", "follow-up", "hot", "closed", "lost"];
 
+  // Sources & Purposes helpers
+  const addSource = async () => {
+    if (!newSource.trim()) return;
+    await addDoc(collection(db, "lead_sources"), { name: newSource });
+    setNewSource("");
+  };
+
+  const addPurpose = async () => {
+    if (!newPurpose.trim()) return;
+    await addDoc(collection(db, "lead_purposes"), { name: newPurpose });
+    setNewPurpose("");
+  };
+
+  const deleteSource = async (id: string) => {
+    await deleteDoc(doc(db, "lead_sources", id));
+  };
+
+  const deletePurpose = async (id: string) => {
+    await deleteDoc(doc(db, "lead_purposes", id));
+  };
+
   return (
     <DashboardLayout title="Lead Manager">
+      <Tabs defaultValue="leads">
+        <TabsList>
+          <TabsTrigger value="leads">Leads</TabsTrigger>
+          <TabsTrigger value="lookups">Sources &amp; Purposes</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="leads">
       <Card className="p-6">
         <div className="flex flex-wrap gap-4 justify-between items-center mb-6">
           <Input
@@ -292,6 +338,65 @@ export default function Leads() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+        </TabsContent>
+
+        <TabsContent value="lookups">
+          <div className="p-6 space-y-6">
+            <h2 className="text-xl font-semibold">Manage Sources & Purposes</h2>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+              {/* Sources */}
+              <div className="space-y-3 border p-4 rounded-md">
+                <h3 className="font-medium">Sources</h3>
+
+                <Input
+                  placeholder="Add new source..."
+                  value={newSource}
+                  onChange={(e) => setNewSource(e.target.value)}
+                />
+                <Button onClick={addSource}>Add Source</Button>
+
+                <ul className="mt-3 space-y-1">
+                  {sources.map((s) => (
+                    <li key={s.id} className="flex justify-between items-center border p-2 rounded">
+                      <span>{s.name}</span>
+                      <Button variant="ghost" size="icon" onClick={() => deleteSource(s.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Purposes */}
+              <div className="space-y-3 border p-4 rounded-md">
+                <h3 className="font-medium">Purposes</h3>
+
+                <Input
+                  placeholder="Add new purpose..."
+                  value={newPurpose}
+                  onChange={(e) => setNewPurpose(e.target.value)}
+                />
+                <Button onClick={addPurpose}>Add Purpose</Button>
+
+                <ul className="mt-3 space-y-1">
+                  {purposes.map((p) => (
+                    <li key={p.id} className="flex justify-between items-center border p-2 rounded">
+                      <span>{p.name}</span>
+                      <Button variant="ghost" size="icon" onClick={() => deletePurpose(p.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
     </DashboardLayout>
   );
 }

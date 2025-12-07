@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { db } from "@/lib/firebase";
 import { collection, onSnapshot } from "firebase/firestore";
 import { Country, State, City } from "country-state-city";
+import { listenSources, listenPurposes } from "@/lib/firestore/lookups";
 
 interface AddLeadModalProps {
   open: boolean;
@@ -39,9 +40,7 @@ export function AddLeadModal({ open, onOpenChange, onAddLead }: AddLeadModalProp
     remarks: "",
   });
 
-  const purposes = ["Commercial Leasing", "Commercial Sale", "Co-working", "Warehouse"];
   const statuses = ["new", "contacted", "follow-up", "hot", "closed", "lost"];
-  const sources = ["Website", "Walk-in", "Referral", "Ad Campaign", "Phone Inquiry"];
   const countries = Country.getAllCountries();
 
   // 🔹 Fetch agents dynamically from Firestore
@@ -62,6 +61,15 @@ export function AddLeadModal({ open, onOpenChange, onAddLead }: AddLeadModalProp
       setFormData((prev) => ({ ...prev, state: "", stateCode: "", city: "" }));
     }
   }, [formData.countryCode]);
+
+  const [sources, setSources] = useState([]);
+  const [purposes, setPurposes] = useState([]);
+
+useEffect(() => {
+  const unsub1 = listenSources(setSources);
+  const unsub2 = listenPurposes(setPurposes);
+  return () => { unsub1(); unsub2(); };
+}, []);
 
   // 🔹 When state changes, fetch cities
   useEffect(() => {
@@ -145,7 +153,7 @@ export function AddLeadModal({ open, onOpenChange, onAddLead }: AddLeadModalProp
               <Select value={formData.purpose} onValueChange={(v) => setFormData({ ...formData, purpose: v })}>
                 <SelectTrigger><SelectValue placeholder="Select Purpose" /></SelectTrigger>
                 <SelectContent>
-                  {purposes.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                  {purposes.map((p) => <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -230,7 +238,7 @@ export function AddLeadModal({ open, onOpenChange, onAddLead }: AddLeadModalProp
               <Select value={formData.source} onValueChange={(v) => setFormData({ ...formData, source: v })}>
                 <SelectTrigger><SelectValue placeholder="Select Source" /></SelectTrigger>
                 <SelectContent>
-                  {sources.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  {sources.map((s) => <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

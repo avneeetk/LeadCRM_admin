@@ -38,6 +38,7 @@ export default function Dashboard() {
   const [viewLead, setViewLead] = useState<any | null>(null);
   const [editLead, setEditLead] = useState<any | null>(null);
   const [deleteLeadId, setDeleteLeadId] = useState<string | null>(null);
+
   const [page, setPage] = useState(1);
   const leadsPerPage = 5;
 
@@ -49,7 +50,7 @@ export default function Dashboard() {
         await deleteDoc(doc(db, "leads", deleteLeadId));
         toast.success("Lead deleted successfully");
       }
-    } catch (err) {
+    } catch {
       toast.error("Error deleting lead");
     } finally {
       setDeleteLeadId(null);
@@ -75,19 +76,19 @@ export default function Dashboard() {
       <div className="space-y-6">
         {/* KPI CARDS */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-          <KPICard title="Total Leads" value={kpiData.totalLeads ?? 0} icon={FileText} variant="info" />
-          <KPICard title="Active Leads" value={kpiData.activeLeads ?? 0} icon={UserCheck} variant="success" />
-          <KPICard title="Closed Deals" value={kpiData.closedDeals ?? 0} icon={CheckCircle2} variant="success" />
-          <KPICard title="Lost Leads" value={kpiData.lostLeads ?? 0} icon={XCircle} variant="destructive" />
-          <KPICard title="Employees Present" value={kpiData.employeesPresent ?? 0} icon={Users} variant="default" />
+          <KPICard title="Total Leads" value={kpiData.totalLeads} icon={FileText} variant="info" />
+          <KPICard title="Active Leads" value={kpiData.activeLeads} icon={UserCheck} variant="success" />
+          <KPICard title="Closed Deals" value={kpiData.closedDeals} icon={CheckCircle2} variant="success" />
+          <KPICard title="Lost Leads" value={kpiData.lostLeads} icon={XCircle} variant="destructive" />
+          <KPICard title="Employees Present" value={kpiData.employeesPresent} icon={Users} variant="default" />
         </div>
 
         {/* ANALYTICS SUMMARY */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <KPICard title="Lead Conversion Rate" value={`${kpiData.conversionRate ?? 0}%`} icon={TrendingUp} variant="success" />
-          <KPICard title="Qualified Leads" value={kpiData.qualifiedLeads ?? 0} icon={Target} variant="info" />
-          <KPICard title="Follow-Up Rate" value={`${kpiData.followUpRate ?? 0}%`} icon={CheckCircle2} variant="warning" />
-          <KPICard title="Avg Time to Conversion" value={`${kpiData.avgTimeToConversion ?? 0} days`} icon={Clock} variant="default" />
+          <KPICard title="Lead Conversion Rate" value={`${kpiData.conversionRate}%`} icon={TrendingUp} variant="success" />
+          <KPICard title="Qualified Leads" value={kpiData.qualifiedLeads} icon={Target} variant="info" />
+          <KPICard title="Follow-Up Rate" value={`${kpiData.followUpRate}%`} icon={CheckCircle2} variant="warning" />
+          <KPICard title="Avg Time to Conversion" value={`${kpiData.avgTimeToConversion} days`} icon={Clock} variant="default" />
         </div>
 
         {/* CHARTS */}
@@ -121,7 +122,7 @@ export default function Dashboard() {
                     dataKey="leads"
                   >
                     {leadsByAgent.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.fill || `hsl(${index * 60},70%,50%)`} />
+                      <Cell key={`cell-${index}`} fill={entry.fill} />
                     ))}
                   </Pie>
                   <Tooltip />
@@ -159,10 +160,10 @@ export default function Dashboard() {
                         <TableCell>{lead.name}</TableCell>
                         <TableCell>{lead.phone}</TableCell>
                         <TableCell><StatusBadge status={lead.status} /></TableCell>
-                        <TableCell>{lead.assignedToName || "Unassigned"}</TableCell>
+                        <TableCell>{lead.assignedToName}</TableCell>
                         <TableCell>
-                          {lead.createdAt?.seconds
-                            ? new Date(lead.createdAt.seconds * 1000).toLocaleDateString()
+                          {lead._createdAt
+                            ? lead._createdAt.toLocaleDateString()
                             : "—"}
                         </TableCell>
                         <TableCell className="text-right">

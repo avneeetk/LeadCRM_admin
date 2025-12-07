@@ -33,7 +33,10 @@ export const addLead = async (lead: any) => {
 
 // 🔹 Update existing lead
 export const updateLead = async (id: string, lead: any) => {
-  return await updateDoc(doc(db, "leads", id), lead);
+  return await updateDoc(doc(db, "leads", id), {
+    ...lead,
+    updatedAt: serverTimestamp(),
+  });
 };
 
 // 🔹 Delete a lead

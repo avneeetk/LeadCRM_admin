@@ -10,6 +10,7 @@ import { db } from "@/lib/firebase";
 import { collection, onSnapshot } from "firebase/firestore";
 import { toast } from "sonner";
 import type { Lead } from "@/lib/mockData";
+import { listenSources, listenPurposes } from "@/lib/firestore/lookups";
 
 interface LeadEditModalProps {
   lead: Lead | null;
@@ -21,35 +22,39 @@ interface LeadEditModalProps {
 export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModalProps) {
   const [formData, setFormData] = useState<any>(lead);
   const [agents, setAgents] = useState<any[]>([]);
+  const [sources, setSources] = useState<any[]>([]);
+  const [purposes, setPurposes] = useState<any[]>([]);
   const [states, setStates] = useState<any[]>([]);
   const [cities, setCities] = useState<any[]>([]);
   const countries = Country.getAllCountries();
+
 
   useEffect(() => {
     if (lead) setFormData({ ...lead });
   }, [lead]);
 
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "users"), (snap) => {
+    const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
       const users = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setAgents(users);
     });
-    return () => unsub();
+    const unsubSources = listenSources(setSources);
+    const unsubPurposes = listenPurposes(setPurposes);
+    return () => { unsubUsers(); unsubSources(); unsubPurposes(); };
   }, []);
 
   useEffect(() => {
     if (formData?.country) {
-      const countryObj = countries.find((c) => c.name === formData.country);
-      if (countryObj) setStates(State.getStatesOfCountry(countryObj.isoCode));
+      const c = countries.find((co) => co.name === formData.country);
+      if (c) setStates(State.getStatesOfCountry(c.isoCode));
     }
   }, [formData?.country]);
 
   useEffect(() => {
     if (formData?.state) {
-      const countryObj = countries.find((c) => c.name === formData.country);
-      const stateObj = states.find((s) => s.name === formData.state);
-      if (countryObj && stateObj)
-        setCities(City.getCitiesOfState(countryObj.isoCode, stateObj.isoCode));
+      const c = countries.find((co) => co.name === formData.country);
+      const s = states.find((st) => st.name === formData.state);
+      if (c && s) setCities(City.getCitiesOfState(c.isoCode, s.isoCode));
     }
   }, [formData?.state]);
 
@@ -69,6 +74,8 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
         </DialogHeader>
 
         <div className="grid gap-4 py-4">
+
+          {/* NAME + PHONE */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Name</Label>
@@ -80,22 +87,32 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
             </div>
           </div>
 
+          {/* EMAIL + SOURCE */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Email</Label>
               <Input value={formData.email || ""} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
             </div>
+
             <div>
               <Label>Source</Label>
-              <Input value={formData.source || ""} onChange={(e) => setFormData({ ...formData, source: e.target.value })} />
+              <Select value={formData.source || ""} onValueChange={(v) => setFormData({ ...formData, source: v })}>
+                <SelectTrigger><SelectValue placeholder="Select Source" /></SelectTrigger>
+                <SelectContent>
+                  {sources.map((s) => (
+                    <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
 
+          {/* STATUS + ASSIGNED TO */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Status</Label>
-              <Select value={formData.status || ""} onValueChange={(v) => setFormData({ ...formData, status: v })}>
-                <SelectTrigger><SelectValue placeholder="Select Status" /></SelectTrigger>
+              <Select value={formData.status} onValueChange={(v) => setFormData({ ...formData, status: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="new">new</SelectItem>
                   <SelectItem value="contacted">contacted</SelectItem>
@@ -106,14 +123,15 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
                 </SelectContent>
               </Select>
             </div>
+
             <div>
               <Label>Assigned To</Label>
-              <Select value={formData.assignedTo || ""} onValueChange={(v) => setFormData({ ...formData, assignedTo: v })}>
-                <SelectTrigger><SelectValue placeholder="Select Agent" /></SelectTrigger>
+              <Select value={formData.assignedTo} onValueChange={(v) => setFormData({ ...formData, assignedTo: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {agents.map((agent) => (
                     <SelectItem key={agent.id} value={agent.id}>
-                      {agent.name || agent.email || agent.id}
+                      {agent.name || agent.email}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -121,50 +139,72 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
             </div>
           </div>
 
+          {/* COUNTRY / STATE / CITY */}
           <div className="grid grid-cols-3 gap-4">
             <div>
               <Label>Country</Label>
               <Select value={formData.country} onValueChange={(v) => setFormData({ ...formData, country: v })}>
-                <SelectTrigger><SelectValue placeholder="Select Country" /></SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {countries.map((c) => <SelectItem key={c.isoCode} value={c.name}>{c.name}</SelectItem>)}
+                  {countries.map((c) => (
+                    <SelectItem key={c.isoCode} value={c.name}>{c.name}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
+
             <div>
               <Label>State</Label>
               <Select value={formData.state} onValueChange={(v) => setFormData({ ...formData, state: v })}>
-                <SelectTrigger><SelectValue placeholder="Select State" /></SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {states.map((s) => <SelectItem key={s.isoCode} value={s.name}>{s.name}</SelectItem>)}
+                  {states.map((s) => (
+                    <SelectItem key={s.isoCode} value={s.name}>{s.name}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
+
             <div>
               <Label>City</Label>
               <Select value={formData.city} onValueChange={(v) => setFormData({ ...formData, city: v })}>
-                <SelectTrigger><SelectValue placeholder="Select City" /></SelectTrigger>
+                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {cities.map((c) => <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>)}
+                  {cities.map((c) => (
+                    <SelectItem key={c.name} value={c.name}>{c.name}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
           </div>
 
+          {/* ADDRESS */}
           <div>
             <Label>Address</Label>
-            <Textarea value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })} />
+            <Textarea value={formData.address || ""} onChange={(e) =>
+              setFormData({ ...formData, address: e.target.value })
+            } />
           </div>
 
+          {/* PURPOSE DROPDOWN */}
           <div>
             <Label>Purpose</Label>
-            <Textarea value={formData.purpose || ""} onChange={(e) => setFormData({ ...formData, purpose: e.target.value })} />
+            <Select value={formData.purpose || ""} onValueChange={(v) => setFormData({ ...formData, purpose: v })}>
+              <SelectTrigger><SelectValue placeholder="Select Purpose" /></SelectTrigger>
+              <SelectContent>
+                {purposes.map((p) => <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
 
+          {/* REMARKS */}
           <div>
             <Label>Remarks</Label>
-            <Textarea value={formData.remarks} onChange={(e) => setFormData({ ...formData, remarks: e.target.value })} />
+            <Textarea value={formData.remarks || ""} onChange={(e) =>
+              setFormData({ ...formData, remarks: e.target.value })
+            } />
           </div>
+
         </div>
 
         <DialogFooter>
