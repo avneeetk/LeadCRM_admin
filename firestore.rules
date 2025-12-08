@@ -2,77 +2,128 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    /* -----------------------------
-       Helper functions
-    ------------------------------*/
-    
-    function isSignedIn() {
+
+    // -----------------------------
+    // HELPERS
+    // -----------------------------
+
+    function signedIn() {
       return request.auth != null;
     }
 
-    // Admin = either custom claim admin=true OR specific admin email
     function isAdmin() {
-      return isSignedIn() &&
-        (
-          (request.auth.token.admin == true) ||
-          (request.auth.token.email == "admin@leadcrm.com")
-        );
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
     }
 
-    /* -----------------------------
-       LEADS (CRM + Mobile App)
-    ------------------------------*/
+    // -----------------------------
+    // LEADS (Dashboard, Agents, Admin)
+    // -----------------------------
     match /leads/{leadId} {
-      // Read & write allowed for all authenticated users
-      allow read, write: if isSignedIn();
+      // Everyone logged in can read all leads (needed for dashboard)
+      allow read: if signedIn();
+
+      // Only admins can modify or delete any lead
+      allow update, delete: if isAdmin();
+
+      // Agents can create new leads
+      allow create: if signedIn();
     }
 
-    /* -----------------------------
-       ATTENDANCE (Mobile App + CRM)
-    ------------------------------*/
-    match /attendance/{attendanceId} {
-      // Attendance read/write allowed for authenticated users
-      allow read, write: if isSignedIn();
+    // -----------------------------
+    // ATTENDANCE
+    // -----------------------------
+    match /attendance/{attId} {
+      // Agents + admins need attendance data
+      allow read, create: if signedIn();
+
+      // Updates allowed only to the user who wrote it or admin
+      allow update: if isAdmin()
+        || (signedIn() && request.auth.uid == resource.data.userId);
     }
 
-    /* -----------------------------
-       USERS (Admin + Agents)
-    ------------------------------*/
+    // -----------------------------
+    // USERS (Admin mostly)
+    // -----------------------------
     match /users/{userId} {
 
-      // Everyone logged in can read user list
-      allow read: if isSignedIn();
+      // Everyone logged in can read user list (dashboard needs assignedTo names)
+      allow read: if signedIn();
 
-      // Only Admin can create users (add agent)
-      allow create: if isAdmin();
+      // Admin full privileges
+      allow create, delete, update: if isAdmin();
 
-      // Only Admin can delete users
-      allow delete: if isAdmin();
+      // Agent can update own SAFE fields (not role, not password)
+      allow update: if (
+        signedIn()
+        && request.auth.uid == userId
+        && !('role' in request.resource.data)
+        && !('password' in request.resource.data)
+      );
 
-      // Admin can update ANY user fields
-      allow update: if isAdmin();
-
-      // Subuser can update ONLY their own NON-sensitive fields
-      allow update: if isSignedIn()
-                 && request.auth.uid == userId
-                 && !(
-                       "role" in request.resource.data ||
-                       "password" in request.resource.data
-                     );
+      // CRM backend auto-update of stats
+      allow update: if (
+        signedIn()
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'assignedLeads',
+          'closedDeals',
+          'hotLeads',
+          'followUpLeads',
+          'lostLeads',
+          'inProgressLeads',
+          'statusBreakdown',
+          'updated_at'
+        ])
+      );
     }
 
-    /* -----------------------------
-       ADMIN SETTINGS
-    ------------------------------*/
+    // -----------------------------
+    // LEAD NOTES (Admin only)
+    // -----------------------------
+    match /lead_notes/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    // -----------------------------
+    // LEAD PURPOSES (Admin only)
+    // -----------------------------
+    match /lead_purposes/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    // -----------------------------
+    // LEAD SOURCES (Admin only)
+    // -----------------------------
+    match /lead_sources/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    // -----------------------------
+    // BANK DETAILS (Admin only)
+    // -----------------------------
+    match /bankDetails/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    // -----------------------------
+    // INVOICES (Admin only)
+    // -----------------------------
+    match /invoices/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    // -----------------------------
+    // ADMIN SETTINGS COLLECTION
+    // -----------------------------
     match /admin/{docId} {
       allow read, write: if isAdmin();
     }
 
-    /* -----------------------------
-       Default DENY for everything else
-    ------------------------------*/
-    match /{document=**} {
+    // -----------------------------
+    // BLOCK EVERYTHING ELSE
+    // -----------------------------
+    match /{path=**} {
       allow read, write: if false;
     }
   }

@@ -1,13 +1,13 @@
+// src/contexts/AuthContext.tsx
+
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { 
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
   onAuthStateChanged,
-  User as FirebaseUser
 } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { auth, db } from '@/lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 import { toast } from 'sonner';
 
 interface User {
@@ -15,7 +15,7 @@ interface User {
   email: string;
   name: string;
   role: 'admin' | 'subuser';
-  active?: boolean;
+  active: boolean;
 }
 
 interface AuthContextType {
@@ -31,102 +31,117 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // ----------------------------------------------------------------------
+  // 🔹 AUTH STATE LISTENER
+  // ----------------------------------------------------------------------
   useEffect(() => {
-    // Listen to Firebase auth state changes
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        // User is signed in with Firebase
         try {
-          // Fetch user data from Firestore
-          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-          
-          if (userDoc.exists()) {
-            const userData = userDoc.data();
-            // Check if user is active
-            if (userData.active === false) {
-              await firebaseSignOut(auth);
-              setUser(null);
-              toast.error("Your account has been deactivated. Please contact the administrator.");
-            } else {
-              setUser({
-                id: firebaseUser.uid,
-                email: firebaseUser.email!,
-                name: userData.name || 'User',
-                role: userData.role || 'subuser',
-                active: userData.active !== false // Default to true if not set
-              });
-            }
-          } else {
-            // User authenticated but no Firestore document
-            setUser({
-              id: firebaseUser.uid,
-              email: firebaseUser.email!,
-              name: firebaseUser.email!.split('@')[0],
-              role: firebaseUser.email === 'admin@leadcrm.com' ? 'admin' : 'subuser'
-            });
+          const userRef = doc(db, "users", firebaseUser.uid);
+          const userSnap = await getDoc(userRef);
+
+          if (!userSnap.exists()) {
+            // User must exist in Firestore (admin-created)
+            await firebaseSignOut(auth);
+            setUser(null);
+            toast.error("Your account is not registered in the CRM.");
+            setIsLoading(false);
+            return;
           }
-        } catch (error) {
-          console.error('Error fetching user data:', error);
-          // Fallback user data
+
+          const data = userSnap.data();
+
+          // Check active/inactive
+          if (data.active === false) {
+            await firebaseSignOut(auth);
+            setUser(null);
+            toast.error("Your account is deactivated. Contact administrator.");
+            setIsLoading(false);
+            return;
+          }
+
+          // Set authenticated user state
           setUser({
             id: firebaseUser.uid,
             email: firebaseUser.email!,
-            name: firebaseUser.email!.split('@')[0],
-            role: firebaseUser.email === 'admin@leadcrm.com' ? 'admin' : 'subuser'
+            name: data.name || firebaseUser.email!.split("@")[0],
+            role: data.role || "subuser",
+            active: data.active !== false,
           });
+
+        } catch (error) {
+          console.error("Auth error:", error);
+          toast.error("Unable to fetch user profile.");
+          setUser(null);
         }
       } else {
-        // User is signed out
         setUser(null);
       }
+
       setIsLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
 
+  // ----------------------------------------------------------------------
+  // 🔹 LOGIN FUNCTION
+  // ----------------------------------------------------------------------
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
       setIsLoading(true);
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      
-      // Check if user is active in Firestore
-      const userDoc = await getDoc(doc(db, "users", userCredential.user.uid));
-      if (userDoc.exists()) {
-        const userData = userDoc.data();
-        if (userData.active === false) {
-          await firebaseSignOut(auth); // sign out immediately
-          toast.error("Your account is inactive. Please contact the administrator.");
-          setIsLoading(false);
-          return false;
-        }
+
+      const credentials = await signInWithEmailAndPassword(auth, email, password);
+      const userRef = doc(db, "users", credentials.user.uid);
+      const snap = await getDoc(userRef);
+
+      if (!snap.exists()) {
+        await firebaseSignOut(auth);
+        toast.error("Your account is not added to CRM yet.");
+        setIsLoading(false);
+        return false;
       }
 
-      // onAuthStateChanged will handle setting the user
-      return true;
-    } catch (error: any) {
-      console.error('Login error:', error);
-      let errorMessage = 'Login failed. Please try again.';
-      
-      // More specific error messages
-      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
-        errorMessage = 'Invalid email or password.';
-      } else if (error.code === 'auth/too-many-requests') {
-        errorMessage = 'Too many login attempts. Please try again later.';
+      const data = snap.data();
+
+      if (data.active === false) {
+        await firebaseSignOut(auth);
+        toast.error("Your account is inactive. Contact admin.");
+        setIsLoading(false);
+        return false;
       }
-      
-      toast.error(errorMessage);
+
+      return true;
+
+    } catch (error: any) {
+      console.error("Login failed:", error);
+
+      let message = "Login failed. Please try again.";
+
+      if (error.code === "auth/user-not-found" || error.code === "auth/wrong-password") {
+        message = "Invalid email or password.";
+      }
+      if (error.code === "auth/too-many-requests") {
+        message = "Too many attempts. Try again later.";
+      }
+
+      toast.error(message);
       setIsLoading(false);
       return false;
     }
   };
 
+  // ----------------------------------------------------------------------
+  // 🔹 LOGOUT FUNCTION
+  // ----------------------------------------------------------------------
   const logout = async () => {
     try {
       await firebaseSignOut(auth);
       setUser(null);
     } catch (error) {
-      console.error('Logout error:', error);
+      console.error("Logout error:", error);
+      toast.error("Failed to logout. Try again.");
     }
   };
 
@@ -138,9 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 }
 
 export function useAuth() {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  return ctx;
 }

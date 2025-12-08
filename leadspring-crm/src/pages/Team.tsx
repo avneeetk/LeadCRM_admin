@@ -1,9 +1,11 @@
+// src/pages/Team.tsx
 import { useState, useEffect } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { AgentPerformanceModal } from "@/components/AgentPerformanceModal";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Plus, Mail, Phone, TrendingUp, Pencil, Trash2 } from "lucide-react";
 import { db } from "@/lib/firebase";
 import { collection, onSnapshot } from "firebase/firestore";
@@ -21,17 +23,12 @@ import {
   SelectTrigger, SelectValue
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-
-/**
- * Team page
- * - Realtime users snapshot
- * - Per-agent listeners for assigned/closed counts (setupLeadListeners handles counts)
- * - Add / Edit / Delete agent
- *
- * Notes:
- * - Delete button is a trash icon on each card (top-right)
- * - Add modal auto-closes, prevents duplicates, shows toasts
- */
+import { Switch } from "@/components/ui/switch";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel,
+  AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle
+} from "@/components/ui/alert-dialog";
 
 export default function Team() {
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -40,10 +37,8 @@ export default function Team() {
   const [isAddAgentOpen, setIsAddAgentOpen] = useState(false);
   const [isEditAgentOpen, setIsEditAgentOpen] = useState(false);
   const [editAgent, setEditAgent] = useState<Partial<Agent> | null>(null);
-
-  const [isAdding, setIsAdding] = useState(false);
-  const [isSavingEdit, setIsSavingEdit] = useState(false);
-  const [isDeleting, setIsDeleting] = useState<Record<string, boolean>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const [newAgent, setNewAgent] = useState({
     name: "",
@@ -54,39 +49,35 @@ export default function Team() {
     dateOfBirth: "",
     gender: "",
     address: "",
+    active: true,
   });
 
-  // Realtime users collection snapshot + setup per-agent listeners and per-doc subscribers
+  // --------------------- REALTIME AGENT + STATS LISTENERS ----------------------------
   useEffect(() => {
-    const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
-      const usersData = snap.docs.map((d) => ({
+    const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => {
+      const users = snapshot.docs.map((d) => ({
         id: d.id,
         assignedLeads: 0,
         closedDeals: 0,
         ...d.data(),
       })) as Agent[];
-      setAgents(usersData);
+      setAgents(users);
     }, (err) => {
       console.error("users snapshot error:", err);
-      toast.error("Failed to load agents");
+      toast.error("Failed to load agents (permissions?)");
     });
 
     const agentLeadUnsubs: Record<string, () => void> = {};
     const agentDocUnsubs: Record<string, () => void> = {};
 
-    // helper to (re)install listeners for a set of agents
     const setupAll = (currentAgents: Agent[]) => {
-      // cleanup previous
+      // cleanup old
       Object.values(agentLeadUnsubs).forEach(u => u && u());
       Object.values(agentDocUnsubs).forEach(u => u && u());
 
       currentAgents.forEach((agent) => {
         if (!agent.id) return;
-
-        // install lead listeners that will keep user doc counts updated
         agentLeadUnsubs[agent.id] = setupLeadListeners(agent.id);
-
-        // subscribe to user doc changes to keep UI fresh
         agentDocUnsubs[agent.id] = subscribeToAgentStats(agent.id, (updated) => {
           if (!updated) return;
           setAgents(prev => prev.map(a => a.id === updated.id ? { ...a, ...updated } : a));
@@ -94,42 +85,44 @@ export default function Team() {
       });
     };
 
-    // initial installation and re-install whenever users collection changes
-    const unsubUsersForLeads = onSnapshot(collection(db, "users"), (snap) => {
-      const usersData = snap.docs.map((d) => ({
+    const usersSnapUnsub = onSnapshot(collection(db, "users"), (snap) => {
+      const users = snap.docs.map((d) => ({
         id: d.id,
         assignedLeads: 0,
         closedDeals: 0,
         ...d.data(),
       })) as Agent[];
-      setupAll(usersData);
+      setupAll(users);
     });
 
     return () => {
       unsubUsers();
-      unsubUsersForLeads();
+      usersSnapUnsub();
       Object.values(agentLeadUnsubs).forEach(u => u && u());
       Object.values(agentDocUnsubs).forEach(u => u && u());
     };
   }, []);
 
-  // Password generator (UI helper)
+  // --------------------- PASSWORD GENERATOR ----------------------------
   const generatePassword = () => {
     const length = 10;
-    const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*";
-    let pw = "";
-    for (let i = 0; i < length; i++) pw += charset[Math.floor(Math.random() * charset.length)];
-    return pw;
+    const charset =
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*";
+    let password = "";
+    for (let i = 0; i < length; i++) {
+      password += charset[Math.floor(Math.random() * charset.length)];
+    }
+    return password;
   };
 
-  // Add agent (prevents duplicates via server-side check inside addAgent helper)
+  // --------------------- ADD AGENT ----------------------------
   const handleAddAgent = async () => {
     if (!newAgent.name || !newAgent.email || !newAgent.phone || !newAgent.password) {
       toast.error("Please fill all required fields");
       return;
     }
-    setIsAdding(true);
 
+    setSubmitting(true);
     try {
       await addAgent({
         name: newAgent.name,
@@ -142,7 +135,7 @@ export default function Team() {
         address: newAgent.address,
       });
 
-      // success: close modal, reset form, show toast
+      toast.success("Agent added successfully");
       setIsAddAgentOpen(false);
       setNewAgent({
         name: "",
@@ -153,22 +146,21 @@ export default function Team() {
         dateOfBirth: "",
         gender: "",
         address: "",
+        active: true,
       });
-      toast.success("Agent created successfully");
     } catch (err: any) {
-      // addAgent throws with a message for duplicates or other errors
-      console.error("addAgent error:", err);
+      // Duplicate checks in addAgent throw readable errors
       const msg = err?.message || "Failed to add agent";
       toast.error(msg);
     } finally {
-      setIsAdding(false);
+      setSubmitting(false);
     }
   };
 
-  // Save agent edit
+  // --------------------- SAVE EDIT AGENT ----------------------------
   const handleSaveEditAgent = async () => {
     if (!editAgent?.id) return;
-    setIsSavingEdit(true);
+    setSubmitting(true);
     try {
       await updateAgent(editAgent.id, {
         name: editAgent.name,
@@ -179,33 +171,40 @@ export default function Team() {
         dateOfBirth: editAgent.dateOfBirth,
         gender: editAgent.gender,
         address: editAgent.address,
+        active: editAgent.active,
       });
       toast.success("Agent updated successfully");
       setIsEditAgentOpen(false);
     } catch (err) {
       console.error("updateAgent error:", err);
-      toast.error("Failed to update agent");
+      toast.error("Failed to update agent (permissions?)");
     } finally {
-      setIsSavingEdit(false);
+      setSubmitting(false);
     }
   };
 
-  // Delete agent (trash icon on card). Confirmation dialog via window.confirm for simplicity.
-  const handleDeleteAgent = async (agentId?: string, agentName?: string) => {
-    if (!agentId) return;
-    const ok = window.confirm(`Delete agent "${agentName || agentId}"? This cannot be undone.`);
-    if (!ok) return;
-
-    setIsDeleting(prev => ({ ...prev, [agentId]: true }));
+  // --------------------- TOGGLE ACTIVE / INACTIVE --------------------
+  const handleToggleActive = async (agentId: string, newValue: boolean) => {
     try {
-      await deleteAgent(agentId);
+      // use updateAgent helper so it respects the same rules/fields
+      await updateAgent(agentId, { active: newValue });
+      toast.success(`Agent ${newValue ? "activated" : "deactivated"}`);
+    } catch (err) {
+      console.error("toggle active error:", err);
+      toast.error("Failed to change status (permissions?)");
+    }
+  };
+
+  // --------------------- DELETE AGENT ----------------------------
+  const handleDeleteAgent = async () => {
+    if (!deleteTarget) return;
+    try {
+      await deleteAgent(deleteTarget);
       toast.success("Agent deleted");
-      // users snapshot will update UI automatically
+      setDeleteTarget(null);
     } catch (err) {
       console.error("deleteAgent error:", err);
-      toast.error("Failed to delete agent");
-    } finally {
-      setIsDeleting(prev => ({ ...prev, [agentId]: false }));
+      toast.error("Failed to delete agent (permissions?)");
     }
   };
 
@@ -247,7 +246,11 @@ export default function Team() {
                 <Label>Password *</Label>
                 <div className="flex gap-2">
                   <Input type="text" value={newAgent.password} onChange={(e) => setNewAgent({ ...newAgent, password: e.target.value })} placeholder="Enter password" />
-                  <Button variant="outline" onClick={() => { const p = generatePassword(); setNewAgent({ ...newAgent, password: p }); toast.success("Password Generated"); }}>
+                  <Button variant="outline" onClick={() => {
+                    const p = generatePassword();
+                    setNewAgent({ ...newAgent, password: p });
+                    toast.success("Password Generated");
+                  }}>
                     Generate
                   </Button>
                 </div>
@@ -275,43 +278,40 @@ export default function Team() {
                 <Textarea value={newAgent.address} onChange={(e) => setNewAgent({ ...newAgent, address: e.target.value })} />
               </div>
 
-              <div>
-                <Label>Role</Label>
-                <Select value={newAgent.role} onValueChange={(value) => setNewAgent({ ...newAgent, role: value })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="subuser">Subuser</SelectItem>
-                    <SelectItem value="admin">Admin</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <Label>Role</Label>
+                  <Select value={newAgent.role} onValueChange={(value) => setNewAgent({ ...newAgent, role: value })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="subuser">Subuser</SelectItem>
+                      <SelectItem value="admin">Admin</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Label>Active</Label>
+                  <Switch checked={newAgent.active} onCheckedChange={(v) => setNewAgent({ ...newAgent, active: v })} />
+                </div>
               </div>
             </div>
 
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsAddAgentOpen(false)}>Cancel</Button>
-              <Button onClick={handleAddAgent} disabled={isAdding}>{isAdding ? "Saving..." : "Save Agent"}</Button>
+              <Button onClick={handleAddAgent} disabled={submitting}>
+                {submitting ? "Saving..." : "Save Agent"}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       }
     >
+      {/* ----------------------- AGENT CARDS ----------------------- */}
       <div className="space-y-6">
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {agents.map((agent) => (
-            <Card key={agent.id} className="overflow-hidden relative">
-              {/* Trash icon (delete) placed top-right */}
-              <div className="absolute right-3 top-3 z-10">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => handleDeleteAgent(agent.id, agent.name)}
-                  disabled={!!isDeleting[agent.id]}
-                  title="Delete agent"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-
+            <Card key={agent.id} className="overflow-hidden">
               <CardHeader className="pb-4">
                 <div className="flex items-start gap-4">
                   <Avatar className="h-16 w-16">
@@ -319,10 +319,20 @@ export default function Team() {
                     <AvatarFallback>{(agent.name || "U").split(" ").map(n => n[0]).join("")}</AvatarFallback>
                   </Avatar>
 
-                  <div>
+                  <div className="flex-1">
                     <CardTitle className="text-lg">{agent.name}</CardTitle>
                     <div className="text-xs text-muted-foreground">{agent.email}</div>
                     <div className="text-xs text-muted-foreground">{agent.phone}</div>
+                  </div>
+
+                  <div className="flex flex-col items-end gap-2">
+                    <div className="flex items-center gap-2">
+                      <Switch checked={agent.active ?? true} onCheckedChange={(v) => handleToggleActive(agent.id!, v)} />
+                      <span className="text-xs">{agent.active ? "Active" : "Inactive"}</span>
+                    </div>
+                    <Button variant="ghost" size="icon" onClick={() => { setDeleteTarget(agent.id!); }}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </div>
                 </div>
               </CardHeader>
@@ -362,7 +372,7 @@ export default function Team() {
       </div>
 
       {/* Edit Agent */}
-      <Dialog open={isEditAgentOpen} onOpenChange={(open) => setIsEditAgentOpen(open)}>
+      <Dialog open={isEditAgentOpen} onOpenChange={setIsEditAgentOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit Agent</DialogTitle>
@@ -418,25 +428,46 @@ export default function Team() {
                 <Textarea value={editAgent.address || ""} onChange={(e) => setEditAgent({ ...editAgent, address: e.target.value })} />
               </div>
 
-              <div>
-                <Label>Role</Label>
-                <Select value={editAgent.role || "subuser"} onValueChange={(value) => setEditAgent({ ...editAgent, role: value })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="subuser">Subuser</SelectItem>
-                    <SelectItem value="admin">Admin</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>Role</Label>
+                  <Select value={editAgent.role || "subuser"} onValueChange={(value) => setEditAgent({ ...editAgent, role: value })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="subuser">Subuser</SelectItem>
+                      <SelectItem value="admin">Admin</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Label>Active</Label>
+                  <Switch checked={editAgent.active ?? true} onCheckedChange={(v) => setEditAgent({ ...editAgent, active: v })} />
+                </div>
               </div>
             </div>
           )}
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditAgentOpen(false)}>Cancel</Button>
-            <Button onClick={handleSaveEditAgent} disabled={isSavingEdit}>{isSavingEdit ? "Saving..." : "Save Changes"}</Button>
+            <Button onClick={handleSaveEditAgent} disabled={submitting}>{submitting ? "Saving..." : "Save Changes"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete confirm */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Agent</AlertDialogTitle>
+            <AlertDialogDescription>Are you sure? This will remove the agent permanently.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteAgent}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AgentPerformanceModal agent={selectedAgent} open={isPerformanceOpen} onOpenChange={setIsPerformanceOpen} />
     </DashboardLayout>

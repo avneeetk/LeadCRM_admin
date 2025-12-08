@@ -12,47 +12,40 @@ import {
 import type { Agent } from "./users";
 
 /**
- * Tracks full real-time metrics per agent:
- * - assignedLeads
- * - closedDeals
- * - hotLeads
- * - followUpLeads
- * - lostLeads
- * - inProgressLeads
- * - statusBreakdown (object)
+ * Robust agent stats listener.
+ * - computes assignedLeads, closedDeals, hotLeads, followUpLeads, lostLeads, inProgressLeads
+ * - computes a statusBreakdown object
+ * - writes only these fields to users/{agentId} to minimize permission surface
+ * - handles permission errors gracefully (logs & stops spam)
  */
+
 export const setupLeadListeners = (agentId: string) => {
   if (!agentId) return () => {};
 
   try {
     const qAssigned = query(collection(db, "leads"), where("assignedTo", "==", agentId));
 
-    const unsubscribe = onSnapshot(
+    const unsub = onSnapshot(
       qAssigned,
       async (snapshot) => {
-        const leads = snapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as any[];
-
-        // Count calculations
-        const assignedLeads = leads.length;
-        const closedDeals = leads.filter((l) => l.status?.toLowerCase() === "closed").length;
-        const hotLeads = leads.filter((l) => l.status?.toLowerCase() === "hot").length;
-        const followUpLeads = leads.filter((l) => l.status?.toLowerCase() === "follow-up").length;
-        const lostLeads = leads.filter((l) => l.status?.toLowerCase() === "lost").length;
-
-        const inProgressLeads = leads.filter((l) =>
-          ["new", "contacted"].includes(l.status?.toLowerCase())
-        ).length;
-
-        // Full status breakdown
-        const statusBreakdown: Record<string, number> = {};
-        leads.forEach((l) => {
-          const s = (l.status || "Unknown").toString();
-          statusBreakdown[s] = (statusBreakdown[s] || 0) + 1;
-        });
-
-        // Write to Firestore (user doc)
         try {
-          await updateDoc(doc(db, "users", agentId), {
+          const leads = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as any[];
+
+          const assignedLeads = leads.length;
+          const closedDeals = leads.filter((l) => (l.status || "").toString().toLowerCase() === "closed").length;
+          const hotLeads = leads.filter((l) => (l.status || "").toString().toLowerCase() === "hot").length;
+          const followUpLeads = leads.filter((l) => (l.status || "").toString().toLowerCase() === "follow-up" || (l.status || "").toString().toLowerCase() === "followup").length;
+          const lostLeads = leads.filter((l) => (l.status || "").toString().toLowerCase() === "lost").length;
+          const inProgressLeads = leads.filter((l) => ["new", "contacted", "in-progress", "in progress"].includes((l.status || "").toString().toLowerCase())).length;
+
+          const statusBreakdown: Record<string, number> = {};
+          leads.forEach((l) => {
+            const s = (l.status || "unknown").toString();
+            statusBreakdown[s] = (statusBreakdown[s] || 0) + 1;
+          });
+
+          // Prepare payload keeping keys minimal (to match rules)
+          const payload: Partial<Agent> = {
             assignedLeads,
             closedDeals,
             hotLeads,
@@ -61,47 +54,49 @@ export const setupLeadListeners = (agentId: string) => {
             inProgressLeads,
             statusBreakdown,
             updated_at: serverTimestamp(),
-          });
+          };
+
+          try {
+            await updateDoc(doc(db, "users", agentId), payload);
+          } catch (writeErr: any) {
+            // Permission denied is expected if rules prevent client writes.
+            // Log and stop throwing so UI won't spam console with repeated errors.
+            if (writeErr?.code === "permission-denied" || (writeErr?.message || "").toLowerCase().includes("permission")) {
+              console.warn(`agentStats: permission denied writing stats for ${agentId}. Ensure rules allow this write or move this logic to a trusted server.`, writeErr.message || writeErr);
+              // NOTE: if client is not allowed to write, do not retry here.
+              return;
+            }
+            console.error("agentStats: unexpected write error:", writeErr);
+          }
         } catch (err) {
-          console.debug("Failed to update agent stats:", err);
+          console.error("agentStats: processing error:", err);
         }
       },
       (err) => {
-        console.error("Lead listener error for agent:", agentId, err);
+        console.error("agentStats: lead query error for", agentId, err);
       }
     );
 
     return () => {
-      try { unsubscribe(); } catch {}
+      try { unsub(); } catch {}
     };
   } catch (err) {
-    console.error("setupLeadListeners fatal error:", err);
+    console.error("agentStats: setup error:", err);
     return () => {};
   }
 };
 
 /**
- * Subscribe to the finalized user stats (Team & Dashboard use this)
+ * subscribeToAgentStats: convenience to subscribe to users/{agentId} doc
  */
-export const subscribeToAgentStats = (
-  agentId: string,
-  cb: (agent: Agent | null) => void
-) => {
+export const subscribeToAgentStats = (agentId: string, cb: (agent: Agent | null) => void) => {
   if (!agentId) return () => {};
-
   const ref = doc(db, "users", agentId);
-
-  const unsub = onSnapshot(
-    ref,
-    (snap) => {
-      if (!snap.exists()) return cb(null);
-      cb({ id: snap.id, ...snap.data() } as Agent);
-    },
-    (err) => {
-      console.error("subscribeToAgentStats error:", err);
-      cb(null);
-    }
-  );
-
-  return unsub;
+  return onSnapshot(ref, (snap) => {
+    if (!snap.exists()) return cb(null);
+    cb({ id: snap.id, ...snap.data() } as Agent);
+  }, (err) => {
+    console.error("subscribeToAgentStats error:", err);
+    cb(null);
+  });
 };
