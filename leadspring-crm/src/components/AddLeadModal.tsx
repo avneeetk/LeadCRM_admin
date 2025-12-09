@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { db } from "@/lib/firebase";
-import { collection, onSnapshot } from "firebase/firestore";
+import { collection, getDocs, addDoc, serverTimestamp } from "firebase/firestore";
 import { Country, State, City } from "country-state-city";
 import { listenSources, listenPurposes } from "@/lib/firestore/lookups";
 
@@ -45,11 +45,10 @@ export function AddLeadModal({ open, onOpenChange, onAddLead }: AddLeadModalProp
 
   // 🔹 Fetch agents dynamically from Firestore
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "users"), (snap) => {
+    getDocs(collection(db, "users")).then((snap) => {
       const users = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setAgents(users);
     });
-    return () => unsub();
   }, []);
 
   // 🔹 When country changes, fetch states
@@ -65,11 +64,14 @@ export function AddLeadModal({ open, onOpenChange, onAddLead }: AddLeadModalProp
   const [sources, setSources] = useState([]);
   const [purposes, setPurposes] = useState([]);
 
-useEffect(() => {
-  const unsub1 = listenSources(setSources);
-  const unsub2 = listenPurposes(setPurposes);
-  return () => { unsub1(); unsub2(); };
-}, []);
+  useEffect(() => {
+    const unsub1 = listenSources(setSources);
+    const unsub2 = listenPurposes(setPurposes);
+    return () => {
+      if (typeof unsub1 === "function") unsub1();
+      if (typeof unsub2 === "function") unsub2();
+    };
+  }, []);
 
   // 🔹 When state changes, fetch cities
   useEffect(() => {
@@ -80,39 +82,42 @@ useEffect(() => {
     }
   }, [formData.stateCode]);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!formData.name || !formData.contact || !formData.assignedTo || !formData.purpose || !formData.status || !formData.source) {
       toast.error("Please fill all required fields");
       return;
     }
 
-    const newLead = {
-      ...formData,
-      phone: formData.contact,
-      createdAt: new Date().toISOString(),
-    };
-
-    onAddLead(newLead);
-    onOpenChange(false);
-    toast.success("Lead added successfully");
-
-    setFormData({
-      name: "",
-      contact: "",
-      assignedTo: "",
-      email: "",
-      purpose: "",
-      source: "",
-      status: "",
-      dealPrice: "",
-      address: "",
-      country: "",
-      countryCode: "",
-      state: "",
-      stateCode: "",
-      city: "",
-      remarks: "",
-    });
+    try {
+      await addDoc(collection(db, "leads"), {
+        ...formData,
+        assignedTo: formData.assignedTo,
+        phone: formData.contact,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      toast.success("Lead added successfully");
+      onOpenChange(false);
+      setFormData({
+        name: "",
+        contact: "",
+        assignedTo: "",
+        email: "",
+        purpose: "",
+        source: "",
+        status: "",
+        dealPrice: "",
+        address: "",
+        country: "",
+        countryCode: "",
+        state: "",
+        stateCode: "",
+        city: "",
+        remarks: "",
+      });
+    } catch (error) {
+      toast.error("Failed to add lead");
+    }
   };
 
   return (
@@ -143,7 +148,7 @@ useEffect(() => {
                 <SelectTrigger><SelectValue placeholder="Select Agent" /></SelectTrigger>
                 <SelectContent>
                   {agents.map((a) => (
-                    <SelectItem key={a.id} value={a.name}>{a.name}</SelectItem>
+                    <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

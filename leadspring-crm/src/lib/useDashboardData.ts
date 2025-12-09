@@ -8,6 +8,8 @@ import {
   orderBy,
   Timestamp,
   DocumentData,
+  getDocs,
+  limit
 } from "firebase/firestore";
 
 // -----------------------------
@@ -87,11 +89,9 @@ export function useDashboardData(timeRangeDays = 0) {
 
     setLoading(true);
 
-    // Leads
-    const leadsQ = query(collection(db, "leads"), orderBy("createdAt", "desc"));
-    const unsubLeads = onSnapshot(
-      leadsQ,
-      (snap) => {
+    // Leads (one-time fetch to reduce reads)
+    getDocs(query(collection(db, "leads"), orderBy("createdAt", "desc"), limit(100)))
+      .then((snap) => {
         const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Lead[];
 
         const filtered = cutoffDate
@@ -102,43 +102,24 @@ export function useDashboardData(timeRangeDays = 0) {
           : arr;
 
         setLeads(filtered);
-      },
-      () => {}
-    );
+      });
 
     // Attendance (FIXED: correct field)
-    const attQ = query(
-      collection(db, "attendance"),
-      orderBy("punch_in_time", "desc") // 👈 Correct field name
-    );
-
-    const unsubAtt = onSnapshot(
-      attQ,
-      (snap) => {
+    getDocs(query(collection(db, "attendance"), orderBy("punch_in_time", "desc"), limit(200)))
+      .then((snap) => {
         const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Attendance[];
         setAttendance(arr);
-      },
-      () => {}
-    );
+      });
 
     // Users
-    const usersQ = query(collection(db, "users"));
-    const unsubUsers = onSnapshot(
-      usersQ,
-      (snap) => {
-        const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as User[];
-        setUsers(arr);
-        setLoading(false);
-      },
-      () => {}
-    );
+    getDocs(collection(db, "users")).then((snap) => {
+      const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as User[];
+      setUsers(arr);
+      setLoading(false);
+    });
 
-    return () => {
-      unsubLeads();
-      unsubAtt();
-      unsubUsers();
-    };
-  }, [timeRangeDays, auth.currentUser]);
+    return () => {};
+  }, [timeRangeDays]);
 
   // -----------------------------
   // KPI Data

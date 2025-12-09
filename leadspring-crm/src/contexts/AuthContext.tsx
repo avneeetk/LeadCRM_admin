@@ -1,7 +1,7 @@
 // src/contexts/AuthContext.tsx
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { 
+import {
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
   onAuthStateChanged,
@@ -21,7 +21,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   login: (email: string, password: string) => Promise<boolean>;
-  logout: () => void;
+  logout: () => Promise<void>;
   isLoading: boolean;
 }
 
@@ -36,16 +36,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // ----------------------------------------------------------------------
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setIsLoading(true);
+
       if (firebaseUser) {
         try {
-          const userRef = doc(db, "users", firebaseUser.uid);
+          const userRef = doc(db, 'users', firebaseUser.uid);
           const userSnap = await getDoc(userRef);
 
           if (!userSnap.exists()) {
             // User must exist in Firestore (admin-created)
             await firebaseSignOut(auth);
             setUser(null);
-            toast.error("Your account is not registered in the CRM.");
+            toast.error('Your account is not registered in the CRM.');
             setIsLoading(false);
             return;
           }
@@ -56,7 +58,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (data.active === false) {
             await firebaseSignOut(auth);
             setUser(null);
-            toast.error("Your account is deactivated. Contact administrator.");
+            toast.error('Your account is deactivated. Contact administrator.');
+            setIsLoading(false);
+            return;
+          }
+
+          // BLOCK non-admins from CRM (subusers use mobile app only)
+          if (data.role !== 'admin') {
+            await firebaseSignOut(auth);
+            setUser(null);
+            toast.error('Access denied. Only admins may log in to CRM.');
             setIsLoading(false);
             return;
           }
@@ -64,15 +75,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Set authenticated user state
           setUser({
             id: firebaseUser.uid,
-            email: firebaseUser.email!,
-            name: data.name || firebaseUser.email!.split("@")[0],
-            role: data.role || "subuser",
+            email: firebaseUser.email || '',
+            name: data.name || firebaseUser.email!.split('@')[0],
+            role: data.role || 'subuser',
             active: data.active !== false,
           });
 
         } catch (error) {
-          console.error("Auth error:", error);
-          toast.error("Unable to fetch user profile.");
+          console.error('Auth error:', error);
+          toast.error('Unable to fetch user profile.');
           setUser(null);
         }
       } else {
@@ -89,16 +100,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // 🔹 LOGIN FUNCTION
   // ----------------------------------------------------------------------
   const login = async (email: string, password: string): Promise<boolean> => {
+    setIsLoading(true);
     try {
-      setIsLoading(true);
-
       const credentials = await signInWithEmailAndPassword(auth, email, password);
-      const userRef = doc(db, "users", credentials.user.uid);
+      const userRef = doc(db, 'users', credentials.user.uid);
       const snap = await getDoc(userRef);
 
       if (!snap.exists()) {
         await firebaseSignOut(auth);
-        toast.error("Your account is not added to CRM yet.");
+        toast.error('Your account is not added to CRM yet.');
         setIsLoading(false);
         return false;
       }
@@ -107,23 +117,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (data.active === false) {
         await firebaseSignOut(auth);
-        toast.error("Your account is inactive. Contact admin.");
+        toast.error('Your account is inactive. Contact admin.');
         setIsLoading(false);
         return false;
       }
 
+      // Enforce CRM access for admins only
+      if (data.role !== 'admin') {
+        await firebaseSignOut(auth);
+        toast.error('Access denied. Only admins may log in to CRM.');
+        setIsLoading(false);
+        return false;
+      }
+
+      // success
+      setIsLoading(false);
       return true;
 
     } catch (error: any) {
-      console.error("Login failed:", error);
+      console.error('Login failed:', error);
 
-      let message = "Login failed. Please try again.";
+      let message = 'Login failed. Please try again.';
 
-      if (error.code === "auth/user-not-found" || error.code === "auth/wrong-password") {
-        message = "Invalid email or password.";
+      if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+        message = 'Invalid email or password.';
       }
-      if (error.code === "auth/too-many-requests") {
-        message = "Too many attempts. Try again later.";
+      if (error.code === 'auth/too-many-requests') {
+        message = 'Too many attempts. Try again later.';
       }
 
       toast.error(message);
@@ -136,12 +156,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // 🔹 LOGOUT FUNCTION
   // ----------------------------------------------------------------------
   const logout = async () => {
+    setIsLoading(true);
     try {
       await firebaseSignOut(auth);
       setUser(null);
     } catch (error) {
-      console.error("Logout error:", error);
-      toast.error("Failed to logout. Try again.");
+      console.error('Logout error:', error);
+      toast.error('Failed to logout. Try again.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -154,6 +177,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }

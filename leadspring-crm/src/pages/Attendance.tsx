@@ -103,7 +103,55 @@ export default function Attendance() {
   useEffect(() => {
     const unsub = listenAttendance(
       (data) => {
-        setRecords(data);
+        // normalize incoming records to a consistent shape (camelCase fields)
+        const normalized = data.map((d: any) => {
+          const name =
+            d.name ||
+            d.employeeName ||
+            d.employee_name ||
+            d.userName ||
+            d.user_name ||
+            d.employee ||
+            "";
+
+          const punchIn =
+            d.punch_in_time ||
+            d.punchInTime ||
+            d.punchIn ||
+            d.punch_in ||
+            null;
+
+          const punchOut =
+            d.punch_out_time ||
+            d.punchOutTime ||
+            d.punchOut ||
+            d.punch_out ||
+            null;
+
+          const date =
+            d.date ||
+            (punchIn?.toDate ? punchIn.toDate() : null);
+
+          const status =
+            d.status ||
+            d.attendanceStatus ||
+            d.state ||
+            "present";
+
+          return {
+            id: d.id || d.__raw?.id || d.docId || "",
+            name,
+            punchInTime: punchIn,
+            punchOutTime: punchOut,
+            date,
+            location: d.location || d.place || d.address || "",
+            status,
+            selfie_base64: d.selfie_base64 || d.selfieBase64 || d.selfie || null,
+            __raw: d,
+          };
+        });
+
+        setRecords(normalized);
       },
       dateRange.from,
       dateRange.to
@@ -124,15 +172,23 @@ export default function Attendance() {
 
   // Present-today stats
   const todayPresent = records.filter((r) => {
-    if (!r.punch_in_time) return false;
-    const d = r.punch_in_time.toDate ? r.punch_in_time.toDate() : new Date(r.date);
-    return isSameDay(d, new Date());
+    const punchIn =
+      r.punchInTime?.toDate?.() ||
+      (r.punchInTime instanceof Date ? r.punchInTime : null) ||
+      (r.date instanceof Date ? r.date : null);
+
+    if (!punchIn) return false;
+
+    const status = r.status?.toString().trim().toLowerCase();
+
+    return isSameDay(punchIn, new Date()) && status === "present";
   }).length;
 
   // Selfie
   const getSelfie = (r: any) => {
-    if (!r.selfie_base64) return null;
-    return `data:image/jpeg;base64,${r.selfie_base64}`;
+    const b64 = r.selfie_base64 || r.selfieBase64 || r.selfie;
+    if (!b64) return null;
+    return `data:image/jpeg;base64,${b64}`;
   };
 
   // Export XLS
@@ -377,21 +433,27 @@ export default function Attendance() {
                       <TableCell>{r.name}</TableCell>
 
                       <TableCell>
-                        {r.punch_in_time?.seconds
-                          ? format(new Date(r.punch_in_time.seconds * 1000), "PPP")
-                          : r.date}
+                        {r.punchInTime?.seconds
+                          ? format(new Date(r.punchInTime.seconds * 1000), "PPP")
+                          : r.date instanceof Date
+                            ? format(r.date, "PPP")
+                            : r.date || "—"}
                       </TableCell>
 
                       <TableCell>
-                        {r.punch_in_time?.seconds
-                          ? format(new Date(r.punch_in_time.seconds * 1000), "p")
-                          : r.punchIn}
+                        {r.punchInTime?.seconds
+                          ? format(new Date(r.punchInTime.seconds * 1000), "p")
+                          : r.punchInTime instanceof Date
+                            ? format(r.punchInTime, "p")
+                            : r.punchIn || "—"}
                       </TableCell>
 
                       <TableCell>
-                        {r.punch_out_time?.seconds
-                          ? format(new Date(r.punch_out_time.seconds * 1000), "p")
-                          : r.punchOut || "—"}
+                        {r.punchOutTime?.seconds
+                          ? format(new Date(r.punchOutTime.seconds * 1000), "p")
+                          : r.punchOutTime instanceof Date
+                            ? format(r.punchOutTime, "p")
+                            : r.punchOut || "—"}
                       </TableCell>
 
                       <TableCell>{r.location || "—"}</TableCell>
@@ -412,7 +474,7 @@ export default function Attendance() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => setDeleteId(r.id)}
+                            onClick={() => setDeleteId(r.id || r.__raw?.id || "")}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>

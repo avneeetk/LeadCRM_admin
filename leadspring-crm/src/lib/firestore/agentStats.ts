@@ -6,97 +6,169 @@ import {
   where,
   onSnapshot,
   doc,
-  updateDoc,
+  setDoc,
+  getDoc,
+  getDocs,
   serverTimestamp,
+  limit as fbLimit,
+  QueryDocumentSnapshot,
+  DocumentData,
 } from "firebase/firestore";
 import type { Agent } from "./users";
 
 /**
- * Robust agent stats listener.
- * - computes assignedLeads, closedDeals, hotLeads, followUpLeads, lostLeads, inProgressLeads
- * - computes a statusBreakdown object
- * - writes only these fields to users/{agentId} to minimize permission surface
- * - handles permission errors gracefully (logs & stops spam)
+ * computeAgentStatsOnce(agentId):
+ * - One-shot computation of agent stats (recommended on Spark).
+ * - Returns the computed payload; attempts to update users/{agentId} with the minimal set.
  */
-
-export const setupLeadListeners = (agentId: string) => {
-  if (!agentId) return () => {};
+export async function computeAgentStatsOnce(agentId: string) {
+  if (!agentId) return null;
 
   try {
-    const qAssigned = query(collection(db, "leads"), where("assignedTo", "==", agentId));
+    const qAssigned = query(collection(db, "leads"), where("assignedTo", "==", agentId), fbLimit(500));
+    const snap = await getDocs(qAssigned);
+    const leads = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as any[];
 
-    const unsub = onSnapshot(
-      qAssigned,
-      async (snapshot) => {
-        try {
-          const leads = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as any[];
+    const assignedLeads = leads.length;
+    const closedDeals = leads.filter((l) => (l.status || "").toString().toLowerCase() === "closed").length;
+    const hotLeads = leads.filter((l) => (l.status || "").toString().toLowerCase() === "hot").length;
+    const followUpLeads = leads.filter((l) => {
+      const s = (l.status || "").toString().toLowerCase();
+      return s === "follow-up" || s === "followup";
+    }).length;
+    const lostLeads = leads.filter((l) => (l.status || "").toString().toLowerCase() === "lost").length;
+    const inProgressLeads = leads.filter((l) => ["new", "contacted", "in-progress", "in progress"].includes((l.status || "").toString().toLowerCase())).length;
 
-          const assignedLeads = leads.length;
-          const closedDeals = leads.filter((l) => (l.status || "").toString().toLowerCase() === "closed").length;
-          const hotLeads = leads.filter((l) => (l.status || "").toString().toLowerCase() === "hot").length;
-          const followUpLeads = leads.filter((l) => (l.status || "").toString().toLowerCase() === "follow-up" || (l.status || "").toString().toLowerCase() === "followup").length;
-          const lostLeads = leads.filter((l) => (l.status || "").toString().toLowerCase() === "lost").length;
-          const inProgressLeads = leads.filter((l) => ["new", "contacted", "in-progress", "in progress"].includes((l.status || "").toString().toLowerCase())).length;
+    const statusBreakdown: Record<string, number> = {};
+    leads.forEach((l) => {
+      const s = (l.status || "unknown").toString();
+      statusBreakdown[s] = (statusBreakdown[s] || 0) + 1;
+    });
 
-          const statusBreakdown: Record<string, number> = {};
-          leads.forEach((l) => {
-            const s = (l.status || "unknown").toString();
-            statusBreakdown[s] = (statusBreakdown[s] || 0) + 1;
-          });
-
-          // Prepare payload keeping keys minimal (to match rules)
-          const payload: Partial<Agent> = {
-            assignedLeads,
-            closedDeals,
-            hotLeads,
-            followUpLeads,
-            lostLeads,
-            inProgressLeads,
-            statusBreakdown,
-            updated_at: serverTimestamp(),
-          };
-
-          try {
-            await updateDoc(doc(db, "users", agentId), payload);
-          } catch (writeErr: any) {
-            // Permission denied is expected if rules prevent client writes.
-            // Log and stop throwing so UI won't spam console with repeated errors.
-            if (writeErr?.code === "permission-denied" || (writeErr?.message || "").toLowerCase().includes("permission")) {
-              console.warn(`agentStats: permission denied writing stats for ${agentId}. Ensure rules allow this write or move this logic to a trusted server.`, writeErr.message || writeErr);
-              // NOTE: if client is not allowed to write, do not retry here.
-              return;
-            }
-            console.error("agentStats: unexpected write error:", writeErr);
-          }
-        } catch (err) {
-          console.error("agentStats: processing error:", err);
-        }
-      },
-      (err) => {
-        console.error("agentStats: lead query error for", agentId, err);
-      }
-    );
-
-    return () => {
-      try { unsub(); } catch {}
+    const payload: Partial<Agent> = {
+      assignedLeads,
+      closedDeals,
+      hotLeads,
+      followUpLeads,
+      lostLeads,
+      inProgressLeads,
+      statusBreakdown,
+      updated_at: serverTimestamp(),
     };
+
+    // ⚠️ Client-side writes disabled for cost control — returning computed stats only
+    return payload;
   } catch (err) {
-    console.error("agentStats: setup error:", err);
-    return () => {};
+    console.error("agentStats: compute error:", err);
+    return null;
   }
-};
+}
 
 /**
- * subscribeToAgentStats: convenience to subscribe to users/{agentId} doc
+ * setupLeadListenersRealtime(agentId, opts)
+ * - Optional realtime listener that batches updates with a debounce to reduce write frequency.
+ * - Use sparingly on Spark (prefer computeAgentStatsOnce).
+ * - Returns unsubscribe function for the listener.
  */
-export const subscribeToAgentStats = (agentId: string, cb: (agent: Agent | null) => void) => {
+export const setupLeadListenersRealtime = (agentId: string, opts?: { debounceMs?: number; pageSize?: number }) => {
   if (!agentId) return () => {};
-  const ref = doc(db, "users", agentId);
-  return onSnapshot(ref, (snap) => {
-    if (!snap.exists()) return cb(null);
-    cb({ id: snap.id, ...snap.data() } as Agent);
+  const { debounceMs = 1000, pageSize = 200 } = opts || {};
+
+  const qAssigned = query(collection(db, "leads"), where("assignedTo", "==", agentId), fbLimit(pageSize));
+
+  let timeoutHandle: any = null;
+  let latestSnapshot: QueryDocumentSnapshot<DocumentData>[] | null = null;
+
+  const sendUpdate = async () => {
+    if (!latestSnapshot) return;
+    try {
+      const leads = latestSnapshot.map((d) => ({ id: d.id, ...(d.data() as any) })) as any[];
+
+      const assignedLeads = leads.length;
+      const closedDeals = leads.filter((l) => (l.status || "").toString().toLowerCase() === "closed").length;
+      const hotLeads = leads.filter((l) => (l.status || "").toString().toLowerCase() === "hot").length;
+      const followUpLeads = leads.filter((l) => {
+        const s = (l.status || "").toString().toLowerCase();
+        return s === "follow-up" || s === "followup";
+      }).length;
+      const lostLeads = leads.filter((l) => (l.status || "").toString().toLowerCase() === "lost").length;
+      const inProgressLeads = leads.filter((l) => ["new", "contacted", "in-progress", "in progress"].includes((l.status || "").toString().toLowerCase())).length;
+
+      const statusBreakdown: Record<string, number> = {};
+      leads.forEach((l) => {
+        const s = (l.status || "unknown").toString();
+        statusBreakdown[s] = (statusBreakdown[s] || 0) + 1;
+      });
+
+      const payload: Partial<Agent> = {
+        assignedLeads,
+        closedDeals,
+        hotLeads,
+        followUpLeads,
+        lostLeads,
+        inProgressLeads,
+        statusBreakdown,
+        updated_at: serverTimestamp(),
+      };
+
+      // ⚠️ Client-side writes disabled — stats computed only for UI, not saved
+      return;
+    } catch (err) {
+      console.error("agentStats: sendUpdate error:", err);
+    } finally {
+      latestSnapshot = null;
+    }
+  };
+
+  const unsub = onSnapshot(qAssigned, (snapshot) => {
+    latestSnapshot = snapshot.docs;
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    timeoutHandle = setTimeout(() => {
+      sendUpdate();
+      timeoutHandle = null;
+    }, debounceMs);
   }, (err) => {
-    console.error("subscribeToAgentStats error:", err);
-    cb(null);
+    console.error("agentStats: lead query error:", err);
   });
+
+  return () => {
+    try {
+      unsub();
+    } catch {}
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+      timeoutHandle = null;
+    }
+  };
 };
+
+// ------- Compatibility wrappers (exports used by UI components) -------
+export const setupLeadListeners = (agentId: string, opts?: { debounceMs?: number; pageSize?: number }) => {
+  return setupLeadListenersRealtime(agentId, opts);
+};
+
+export function subscribeToAgentStats(agentId: string, cb: (payload: any | null) => void) {
+  if (!agentId) return () => {};
+  try {
+    const userRef = doc(db, "users", agentId);
+    const unsub = onSnapshot(
+      userRef,
+      (snap) => {
+        if (!snap.exists()) {
+          cb(null);
+          return;
+        }
+        const data = { id: snap.id, ...snap.data() } as any;
+        cb(data);
+      },
+      (err) => {
+        console.error("subscribeToAgentStats - snapshot error:", err);
+        cb(null);
+      }
+    );
+    return unsub;
+  } catch (err) {
+    console.error("subscribeToAgentStats error:", err);
+    return () => {};
+  }
+}

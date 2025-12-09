@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { KPICard } from "@/components/KPICard";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -42,9 +42,14 @@ export default function Dashboard() {
   const [page, setPage] = useState(1);
   const leadsPerPage = 5;
 
-  const paginatedLeads = recentLeads.slice((page - 1) * leadsPerPage, page * leadsPerPage);
+  const paginatedLeads = useMemo(() => {
+    return recentLeads.slice((page - 1) * leadsPerPage, page * leadsPerPage);
+  }, [page, recentLeads]);
 
-  const handleDeleteLead = async () => {
+  const memoStatusData = useMemo(() => leadsByStatus, [leadsByStatus]);
+  const memoAgentData = useMemo(() => leadsByAgent, [leadsByAgent]);
+
+  const handleDeleteLead = useCallback(async () => {
     try {
       if (deleteLeadId) {
         await deleteDoc(doc(db, "leads", deleteLeadId));
@@ -55,7 +60,7 @@ export default function Dashboard() {
     } finally {
       setDeleteLeadId(null);
     }
-  };
+  }, [deleteLeadId]);
 
   return (
     <DashboardLayout
@@ -96,39 +101,47 @@ export default function Dashboard() {
           <Card>
             <CardHeader><CardTitle>Leads by Status</CardTitle></CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={leadsByStatus}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="status" />
-                  <YAxis />
-                  <Tooltip />
-                  <Bar dataKey="count" fill="#3b82f6" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              {loading ? (
+                <div className="animate-pulse h-40 w-full bg-muted rounded-md" />
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={memoStatusData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="status" />
+                    <YAxis />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="#3b82f6" radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader><CardTitle>Leads per Agent</CardTitle></CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie
-                    data={leadsByAgent}
-                    cx="50%"
-                    cy="50%"
-                    label={({ agent, leads }) => `${agent}: ${leads}`}
-                    outerRadius={100}
-                    dataKey="leads"
-                  >
-                    {leadsByAgent.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.fill} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
+              {loading ? (
+                <div className="animate-pulse h-40 w-full bg-muted rounded-md" />
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={memoAgentData}
+                      cx="50%"
+                      cy="50%"
+                      label={({ agent, leads }) => `${agent}: ${leads}`}
+                      outerRadius={100}
+                      dataKey="leads"
+                    >
+                      {memoAgentData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.fill} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -162,9 +175,7 @@ export default function Dashboard() {
                         <TableCell><StatusBadge status={lead.status} /></TableCell>
                         <TableCell>{lead.assignedToName}</TableCell>
                         <TableCell>
-                          {lead._createdAt
-                            ? lead._createdAt.toLocaleDateString()
-                            : "—"}
+                          {lead._createdAt ? new Date(lead._createdAt).toLocaleDateString("en-IN",{ day:"2-digit", month:"short", year:"numeric" }) : "—"}
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">

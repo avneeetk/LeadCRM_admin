@@ -10,7 +10,7 @@ import { Plus, Mail, Phone, TrendingUp, Pencil, Trash2 } from "lucide-react";
 import { db } from "@/lib/firebase";
 import { collection, onSnapshot } from "firebase/firestore";
 import { addAgent, updateAgent, deleteAgent, Agent } from "@/lib/firestore/users";
-import { setupLeadListeners, subscribeToAgentStats } from "@/lib/firestore/agentStats";
+import { computeAgentStatsOnce, setupLeadListenersRealtime } from "@/lib/firestore/agentStats";
 import { toast } from "sonner";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter,
@@ -54,52 +54,57 @@ export default function Team() {
 
   // --------------------- REALTIME AGENT + STATS LISTENERS ----------------------------
   useEffect(() => {
-    const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => {
-      const users = snapshot.docs.map((d) => ({
-        id: d.id,
-        assignedLeads: 0,
-        closedDeals: 0,
-        ...d.data(),
-      })) as Agent[];
-      setAgents(users);
-    }, (err) => {
-      console.error("users snapshot error:", err);
-      toast.error("Failed to load agents (permissions?)");
-    });
-
+    // store unsub functions so we can cleanup properly
     const agentLeadUnsubs: Record<string, () => void> = {};
     const agentDocUnsubs: Record<string, () => void> = {};
 
-    const setupAll = (currentAgents: Agent[]) => {
-      // cleanup old
-      Object.values(agentLeadUnsubs).forEach(u => u && u());
-      Object.values(agentDocUnsubs).forEach(u => u && u());
-
-      currentAgents.forEach((agent) => {
-        if (!agent.id) return;
-        agentLeadUnsubs[agent.id] = setupLeadListeners(agent.id);
-        agentDocUnsubs[agent.id] = subscribeToAgentStats(agent.id, (updated) => {
-          if (!updated) return;
-          setAgents(prev => prev.map(a => a.id === updated.id ? { ...a, ...updated } : a));
-        });
-      });
-    };
-
-    const usersSnapUnsub = onSnapshot(collection(db, "users"), (snap) => {
+    // single users snapshot (no duplicate subscriptions)
+    const usersUnsub = onSnapshot(collection(db, "users"), (snap) => {
       const users = snap.docs.map((d) => ({
         id: d.id,
         assignedLeads: 0,
         closedDeals: 0,
         ...d.data(),
       })) as Agent[];
-      setupAll(users);
+
+      setAgents(users);
+
+      // cleanup any previous per-agent listeners before re-creating
+      Object.values(agentLeadUnsubs).forEach((u) => { try { u(); } catch {} });
+      Object.values(agentDocUnsubs).forEach((u) => { try { u(); } catch {} });
+
+      users.forEach((agent) => {
+        if (!agent.id) return;
+
+        // setup realtime minimal listener for leads assigned to this agent
+        try {
+          const leadUnsub = setupLeadListenersRealtime(agent.id);
+          agentLeadUnsubs[agent.id] = typeof leadUnsub === "function" ? leadUnsub : () => {};
+        } catch (err) {
+          console.warn("setupLeadListenersRealtime failed for", agent.id, err);
+          agentLeadUnsubs[agent.id] = () => {};
+        }
+
+        // compute agent stats once (cheap, one-time) and update UI if changed
+        computeAgentStatsOnce(agent.id).then((updated) => {
+          if (!updated) return;
+          setAgents((prev) => prev.map((a) => (a.id === agent.id ? { ...a, ...updated } : a)));
+        }).catch((err) => {
+          console.warn("computeAgentStatsOnce error for", agent.id, err);
+        });
+
+        // placeholder unsub for doc-level subscription; we don't create an extra onSnapshot here
+        agentDocUnsubs[agent.id] = () => {};
+      });
+    }, (err) => {
+      console.error("users snapshot error:", err);
+      toast.error("Failed to load agents (permissions?)");
     });
 
     return () => {
-      unsubUsers();
-      usersSnapUnsub();
-      Object.values(agentLeadUnsubs).forEach(u => u && u());
-      Object.values(agentDocUnsubs).forEach(u => u && u());
+      try { usersUnsub(); } catch {}
+      Object.values(agentLeadUnsubs).forEach((u) => { try { u(); } catch {} });
+      Object.values(agentDocUnsubs).forEach((u) => { try { u(); } catch {} });
     };
   }, []);
 
@@ -123,6 +128,13 @@ export default function Team() {
     }
 
     setSubmitting(true);
+    // safety timeout: auto-close modal if operation stalls for too long
+    const stallTimeout = setTimeout(() => {
+      toast.warning("Saving is taking longer than expected — closing modal. Check the user list to confirm the new agent.");
+      setSubmitting(false);
+      setIsAddAgentOpen(false);
+    }, 15000);
+
     try {
       await addAgent({
         name: newAgent.name,
@@ -135,6 +147,7 @@ export default function Team() {
         address: newAgent.address,
       });
 
+      clearTimeout(stallTimeout);
       toast.success("Agent added successfully");
       setIsAddAgentOpen(false);
       setNewAgent({
@@ -149,7 +162,7 @@ export default function Team() {
         active: true,
       });
     } catch (err: any) {
-      // Duplicate checks in addAgent throw readable errors
+      clearTimeout(stallTimeout);
       const msg = err?.message || "Failed to add agent";
       toast.error(msg);
     } finally {
@@ -185,26 +198,57 @@ export default function Team() {
 
   // --------------------- TOGGLE ACTIVE / INACTIVE --------------------
   const handleToggleActive = async (agentId: string, newValue: boolean) => {
-    try {
-      // use updateAgent helper so it respects the same rules/fields
-      await updateAgent(agentId, { active: newValue });
-      toast.success(`Agent ${newValue ? "activated" : "deactivated"}`);
-    } catch (err) {
-      console.error("toggle active error:", err);
-      toast.error("Failed to change status (permissions?)");
-    }
-  };
+  // optimistic UI update so toggle feels instant
+  try {
+    // update local UI immediately
+    setAgents(prev => prev.map(a => a.id === agentId ? { ...a, active: newValue } : a));
+
+    // persist change
+    await updateAgent(agentId, { active: newValue });
+
+    toast.success(`Agent ${newValue ? "activated" : "deactivated"}`);
+  } catch (err) {
+    console.error("toggle active error:", err);
+    toast.error("Failed to change status (permissions?)");
+
+    // rollback optimistic update on failure
+    setAgents(prev => prev.map(a => a.id === agentId ? { ...a, active: !newValue } : a));
+  }
+};
 
   // --------------------- DELETE AGENT ----------------------------
+  const [deleting, setDeleting] = useState(false);
+
   const handleDeleteAgent = async () => {
     if (!deleteTarget) return;
+
+    // Use safe deletion (no optimistic UI remove) so we don't lose the Firestore record
+    // if the Auth cloud-function fails. Disable the button while in-flight.
+    setDeleting(true);
+
     try {
+      // Attempt server-side deletion (Cloud Function will remove auth user)
       await deleteAgent(deleteTarget);
+
+      // Remove from local state only after server confirms deletion
+      setAgents((prev) => prev.filter((a) => a.id !== deleteTarget));
+
       toast.success("Agent deleted");
       setDeleteTarget(null);
-    } catch (err) {
+    } catch (err: any) {
       console.error("deleteAgent error:", err);
-      toast.error("Failed to delete agent (permissions?)");
+
+      // Provide a clearer error message for common cases
+      const code = err?.code || (err?.message && err.message.toLowerCase()) || "unknown_error";
+      if (String(code).toLowerCase().includes("permission") || String(code).toLowerCase().includes("permission-denied")) {
+        toast.error("Permission denied: you don’t have rights to delete this agent.");
+      } else if (String(code).toLowerCase().includes("internal") || String(code).toLowerCase().includes("internal-error")) {
+        toast.error("Server error while deleting agent. Try again in a moment.");
+      } else {
+        toast.error(err?.message || "Failed to delete agent");
+      }
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -214,7 +258,7 @@ export default function Team() {
       actions={
         <Dialog open={isAddAgentOpen} onOpenChange={(open) => setIsAddAgentOpen(open)}>
           <DialogTrigger asChild>
-            <Button onClick={() => setIsAddAgentOpen(true)}>
+            <Button>
               <Plus className="mr-2 h-4 w-4" />
               Add Agent
             </Button>
@@ -327,8 +371,8 @@ export default function Team() {
 
                   <div className="flex flex-col items-end gap-2">
                     <div className="flex items-center gap-2">
-                      <Switch checked={agent.active ?? true} onCheckedChange={(v) => handleToggleActive(agent.id!, v)} />
-                      <span className="text-xs">{agent.active ? "Active" : "Inactive"}</span>
+                      <Switch checked={Boolean(agent.active)} onCheckedChange={(v) => handleToggleActive(agent.id!, Boolean(v))} />
+<span className="text-xs">{Boolean(agent.active) ? "Active" : "Inactive"}</span>
                     </div>
                     <Button variant="ghost" size="icon" onClick={() => { setDeleteTarget(agent.id!); }}>
                       <Trash2 className="h-4 w-4" />
@@ -442,7 +486,7 @@ export default function Team() {
 
                 <div className="flex items-center gap-2">
                   <Label>Active</Label>
-                  <Switch checked={editAgent.active ?? true} onCheckedChange={(v) => setEditAgent({ ...editAgent, active: v })} />
+                  <Switch checked={Boolean(editAgent.active)} onCheckedChange={(v) => setEditAgent({ ...editAgent, active: Boolean(v) })} />
                 </div>
               </div>
             </div>
@@ -464,7 +508,7 @@ export default function Team() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteAgent}>Delete</AlertDialogAction>
+            <AlertDialogAction onClick={handleDeleteAgent} disabled={deleting}>{deleting ? 'Deleting...' : 'Delete'}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

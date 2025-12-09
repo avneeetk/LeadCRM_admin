@@ -11,90 +11,164 @@ import {
   where,
   orderBy,
   onSnapshot,
+  limit as fbLimit,
+  startAfter,
   Timestamp,
+  DocumentData,
+  QueryDocumentSnapshot,
+  serverTimestamp,
 } from "firebase/firestore";
 
-// 🔹 Normalize date inputs
-const toTimestamp = (value: any) => {
+/** normalize to Firestore Timestamp or return null */
+const toTimestamp = (value: any): Timestamp | null => {
   if (!value) return null;
+  if (value instanceof Timestamp) return value;
   if (value instanceof Date) return Timestamp.fromDate(value);
   if (typeof value === "string") return Timestamp.fromDate(new Date(value));
-  return value;
+  return null;
 };
 
-// 🔹 Fetch Attendance with optional date range
-export const fetchAttendance = async (
-  startDate?: Date,
-  endDate?: Date
-) => {
-  let q: any = query(
-    collection(db, "attendance"),
-    orderBy("punch_in_time", "desc")
-  );
+function normalizeRecord(d) {
+  const data = d.data();
+  return {
+    id: d.id,
+    name: data.name || data.employeeName || "",
+    punchInTime: data.punch_in_time || data.punchInTime || null,
+    punchOutTime: data.punch_out_time || data.punchOutTime || null,
+    location: data.location || data.place || "",
+    status: data.status || "present",
+    selfie_base64: data.selfie_base64 || data.selfieBase64 || data.selfie || null,
+    __raw: data
+  };
+}
 
+/**
+ * Paginated attendance fetch (one-time)
+ */
+export async function fetchAttendancePaged({
+  startDate,
+  endDate,
+  pageSize = 200,
+  cursor,
+}: {
+  startDate?: Date;
+  endDate?: Date;
+  pageSize?: number;
+  cursor?: QueryDocumentSnapshot<DocumentData> | null;
+}) {
+  const ref = collection(db, "attendance");
+
+  // Build base query without limit
+  let baseQuery;
   if (startDate && endDate) {
-    q = query(
-      collection(db, "attendance"),
+    baseQuery = query(
+      ref,
+      orderBy("punch_in_time", "desc"),
       where("punch_in_time", ">=", toTimestamp(startDate)),
-      where("punch_in_time", "<=", toTimestamp(endDate)),
-      orderBy("punch_in_time", "desc")
+      where("punch_in_time", "<=", toTimestamp(endDate))
     );
+  } else {
+    baseQuery = query(ref, orderBy("punch_in_time", "desc"));
   }
 
-  const snapshot = await getDocs(q);
-  return snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-};
+  // Apply pagination correctly
+  const q = cursor
+    ? query(baseQuery, startAfter(cursor), fbLimit(pageSize))
+    : query(baseQuery, fbLimit(pageSize));
 
-// 🔹 Add Attendance (for CRM manual entry)
-export const addAttendance = async (record: any) => {
+  const snap = await getDocs(q);
+  const last = snap.docs[snap.docs.length - 1] || null;
+  return { data: snap.docs.map(normalizeRecord), cursor: last };
+}
+
+/**
+ * Add Attendance
+ */
+export async function addAttendance(record: any) {
   return await addDoc(collection(db, "attendance"), {
     ...record,
     punch_in_time: toTimestamp(record.punchInTime || record.date),
-    punch_out_time: record.punchOutTime
-      ? toTimestamp(record.punchOutTime)
-      : null,
-    created_at: Timestamp.now(),
+    punch_out_time: record.punchOutTime ? toTimestamp(record.punchOutTime) : null,
+    created_at: serverTimestamp(),
   });
-};
+}
 
-// 🔹 Update attendance
-export const updateAttendance = async (id: string, record: any) => {
+/**
+ * Update attendance
+ */
+export async function updateAttendance(id: string, record: any) {
   return await updateDoc(doc(db, "attendance", id), {
     ...record,
-    updated_at: Timestamp.now(),
+    updated_at: serverTimestamp(),
   });
-};
+}
 
-// 🔹 Delete attendance
-export const deleteAttendanceRecord = async (id: string) => {
+/**
+ * Delete attendance
+ */
+export async function deleteAttendanceRecord(id: string) {
   return await deleteDoc(doc(db, "attendance", id));
-};
+}
 
-// 🔹 Real-time listener (used by CRM)
-export const listenAttendance = (
-  callback: (records: any[]) => void,
-  startDate?: Date,
-  endDate?: Date
-) => {
-  let q: any = query(
-    collection(db, "attendance"),
-    orderBy("punch_in_time", "desc")
-  );
+/**
+ * Optional realtime listener (opt-in). Default non-realtime (one-time fetch).
+ */
+export function listenAttendance(
+  cb: (rows: any[]) => void,
+  opts?: { realtime?: boolean; startDate?: Date; endDate?: Date; pageSize?: number }
+) {
+  const { realtime = false, pageSize = 200, startDate, endDate } = opts || {};
 
-  if (startDate && endDate) {
-    q = query(
-      collection(db, "attendance"),
-      where("punch_in_time", ">=", toTimestamp(startDate)),
-      where("punch_in_time", "<=", toTimestamp(endDate)),
-      orderBy("punch_in_time", "desc")
-    );
+  // Always return an unsubscribe function immediately
+  let active = true;
+
+  // Non-realtime mode -> Fetch once and stop
+  if (!realtime) {
+    (async () => {
+      try {
+        const res = await fetchAttendancePaged({ startDate, endDate, pageSize });
+        // fetchAttendancePaged already returns normalized records, do not re-run normalizeRecord
+        if (active) cb(res.data);
+      } catch (err) {
+        console.error("listenAttendance (fetch once) error:", err);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
   }
 
-  return onSnapshot(q, (snapshot) => {
-    const records = snapshot.docs.map((d) => ({
-      id: d.id,
-      ...d.data(),
-    }));
-    callback(records);
-  });
-};
+  // Realtime mode
+  let unsub: (() => void) | null = null;
+
+  try {
+    const ref = collection(db, "attendance");
+
+    let q;
+    if (startDate && endDate) {
+      q = query(
+        ref,
+        orderBy("punch_in_time", "desc"),
+        where("punch_in_time", ">=", toTimestamp(startDate)),
+        where("punch_in_time", "<=", toTimestamp(endDate)),
+        fbLimit(pageSize)
+      );
+    } else {
+      q = query(ref, orderBy("punch_in_time", "desc"), fbLimit(pageSize));
+    }
+
+    unsub = onSnapshot(q, (snap) => {
+      if (!active) return;
+      cb(snap.docs.map(normalizeRecord));
+    });
+
+  } catch (err) {
+    console.error("listenAttendance (realtime) error:", err);
+  }
+
+  return () => {
+    active = false;
+    if (typeof unsub === "function") unsub();
+  };
+}

@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Eye, Pencil, Plus, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { db } from "@/lib/firebase";
-import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from "firebase/firestore";
+import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, getDocs, query, where } from "firebase/firestore";
 import { toast } from "sonner";
 import { LeadViewModal } from "@/components/LeadViewModal";
 import { LeadEditModal } from "@/components/LeadEditModal";
@@ -43,6 +43,45 @@ interface Lead {
   remarks?: string;
 }
 
+function NotesBadge({ leadId }: { leadId: string }) {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+
+    const fetchNotesCount = async () => {
+      try {
+        // Query the subcollection under the lead document (matches your rules)
+        const q = query(collection(db, "leads", leadId, "notes"));
+        const snapshot = await getDocs(q);
+        if (!active) return;
+        setCount(snapshot.size);
+      } catch (err: any) {
+        console.warn("fetchNotesCount error:", err);
+        // If permission denied or other error, show 0 instead of crashing
+        if (!active) return;
+        setCount(0);
+      }
+    };
+
+    if (leadId) fetchNotesCount();
+
+    return () => {
+      active = false;
+    };
+  }, [leadId]);
+
+  if (count === 0) return null;
+  return (
+    <div
+      className="relative inline-flex w-6 h-6 items-center justify-center rounded-full bg-blue-600 text-white text-xs"
+      title={`${count} new notes`}
+    >
+      {count}
+    </div>
+  );
+}
+
 export default function Leads() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -59,6 +98,7 @@ export default function Leads() {
 
   const [sources, setSources] = useState<any[]>([]);
   const [purposes, setPurposes] = useState<any[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
   const [newSource, setNewSource] = useState("");
   const [newPurpose, setNewPurpose] = useState("");
 
@@ -76,6 +116,11 @@ export default function Leads() {
     const unsubPurposes = onSnapshot(collection(db, "lead_purposes"), (snap) => {
       setPurposes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
+    // Users loader
+    (async () => {
+      const snapUsers = await getDocs(collection(db, "users"));
+      setUsers(snapUsers.docs.map(d => ({ id: d.id, ...d.data() })));
+    })();
     return () => {
       unsub();
       unsubSources();
@@ -224,6 +269,7 @@ export default function Leads() {
                 <TableHead>Source</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Assigned To</TableHead>
+                <TableHead>Notes</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
@@ -238,7 +284,10 @@ export default function Leads() {
                   <TableCell>
                     <Badge variant="outline">{lead.status}</Badge>
                   </TableCell>
-                  <TableCell>{lead.assignedTo}</TableCell>
+                  <TableCell>{users.find(u => u.id === lead.assignedTo)?.name || lead.assignedTo}</TableCell>
+                  <TableCell>
+                    <NotesBadge leadId={lead.id} />
+                  </TableCell>
                   <TableCell>
                     {lead.createdAt?.toDate
                       ? lead.createdAt.toDate().toLocaleDateString()
@@ -280,7 +329,7 @@ export default function Leads() {
 
               {currentLeads.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-6 text-muted-foreground">
+                  <TableCell colSpan={9} className="text-center py-6 text-muted-foreground">
                     No leads found.
                   </TableCell>
                 </TableRow>

@@ -3,10 +3,9 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // -----------------------------
+    // ------------------------------------
     // HELPERS
-    // -----------------------------
-
+    // ------------------------------------
     function signedIn() {
       return request.auth != null;
     }
@@ -17,112 +16,214 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
     }
 
-    // -----------------------------
-    // LEADS (Dashboard, Agents, Admin)
-    // -----------------------------
+    // ------------------------------------
+    // LEADS
+    // ------------------------------------
     match /leads/{leadId} {
-      // Everyone logged in can read all leads (needed for dashboard)
+
+      // Everyone logged in can read leads (dashboard, agents, admin)
       allow read: if signedIn();
 
-      // Only admins can modify or delete any lead
+      // Admins can fully manage all leads
+      allow create, update, delete: if isAdmin();
+
+      // Agents can create leads
+      allow create: if signedIn();
+
+      // Agents CAN update leads, but only SAFE fields
+      allow update: if signedIn()
+        && !isAdmin()
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          "status",
+          "assignedTo",
+          "purpose",
+          "source",
+          "dealPrice",
+          "address",
+          "city",
+          "state",
+          "country",
+          "email",
+          "phone",
+          "name",
+          "remarks",
+          "updatedAt",
+          "updated_at"
+        ]);
+    }
+
+    // ------------------------------------
+    // LEAD NOTES (subcollection inside a lead)
+    // Supports two schemas: { content, createdBy } and { text, by }
+    // ------------------------------------
+    match /leads/{leadId}/notes/{noteId} {
+      // Admin can read all notes. Assigned agent can read notes for their leads.
+      allow read: if signedIn() && (
+        isAdmin() ||
+        // handle both assignedTo and assigned_to field variants on lead
+        get(/databases/$(database)/documents/leads/$(leadId)).data.assignedTo == request.auth.uid ||
+        get(/databases/$(database)/documents/leads/$(leadId)).data.assigned_to == request.auth.uid
+      );
+
+      // Admin can perform all write operations
+      allow create, update, delete: if isAdmin();
+
+      // Agents can create notes for their assigned leads. Accepts either schema.
+      allow create: if signedIn() && (
+        // must be the assigned agent
+        (get(/databases/$(database)/documents/leads/$(leadId)).data.assignedTo == request.auth.uid ||
+         get(/databases/$(database)/documents/leads/$(leadId)).data.assigned_to == request.auth.uid)
+        && (
+          // new schema: { content, createdBy }
+          (request.resource.data.keys().hasAll(['content','createdBy']) &&
+           request.resource.data.content is string &&
+           request.resource.data.content.size() > 0 &&
+           request.resource.data.createdBy == request.auth.uid)
+          ||
+          // legacy/schema variant: { text, by }
+          (request.resource.data.keys().hasAll(['text','by']) &&
+           request.resource.data.text is string &&
+           request.resource.data.text.size() > 0 &&
+           request.resource.data.by == request.auth.uid)
+        )
+      );
+
+      // Agents may update their own note (but not others'). Matches both schemas.
+      allow update: if signedIn() && (
+        (get(/databases/$(database)/documents/leads/$(leadId)).data.assignedTo == request.auth.uid ||
+         get(/databases/$(database)/documents/leads/$(leadId)).data.assigned_to == request.auth.uid)
+        && (
+          (resource.data.createdBy == request.auth.uid && request.resource.data.keys().hasOnly(['content'])) ||
+          (resource.data.by == request.auth.uid && request.resource.data.keys().hasOnly(['text']))
+        )
+      );
+
+      // Only admins can delete notes
+      allow delete: if isAdmin();
+    }
+
+    // ------------------------------------
+    // LEGACY / TOP-LEVEL lead_notes collection
+    // ------------------------------------
+    match /lead_notes/{noteId} {
+      // Read allowed for admins or the agent assigned to that lead
+      allow read: if signedIn() && (
+        isAdmin() ||
+        // resource available on read; check the referenced lead's assigned agent
+        (resource.data.lead_id != null && (
+          get(/databases/$(database)/documents/leads/$(resource.data.lead_id)).data.assignedTo == request.auth.uid ||
+          get(/databases/$(database)/documents/leads/$(resource.data.lead_id)).data.assigned_to == request.auth.uid
+        ))
+      );
+
+      // Admins can manage all
+      allow create, update, delete: if isAdmin();
+
+      // Agents can create notes for leads they are assigned to. Accepts `{ lead_id, sender_id, message }` schema.
+      allow create: if signedIn() && (
+        resource.data.lead_id is string &&
+        (get(/databases/$(database)/documents/leads/$(resource.data.lead_id)).data.assignedTo == request.auth.uid ||
+         get(/databases/$(database)/documents/leads/$(resource.data.lead_id)).data.assigned_to == request.auth.uid)
+        && request.resource.data.keys().hasAll(['lead_id','sender_id','message'])
+        && request.resource.data.sender_id == request.auth.uid
+        && request.resource.data.message is string
+        && request.resource.data.message.size() > 0
+      );
+
+      // Agents may update their own legacy notes (only message field)
+      allow update: if signedIn() && resource.data.sender_id == request.auth.uid && request.resource.data.keys().hasOnly(['message']);
+    }
+
+    // ------------------------------------
+    // ATTENDANCE
+    // ------------------------------------
+    match /attendance/{attId} {
+
+      // Logged-in users can read attendance (useful for admin dashboards and employee view)
+      allow read: if signedIn();
+
+      // User can create their own attendance documents; require userId match if provided
+      allow create: if signedIn() && (
+        !('userId' in request.resource.data) || request.auth.uid == request.resource.data.userId
+      );
+
+      // Admins can modify anything
       allow update, delete: if isAdmin();
 
-      // Agents can create new leads
-      allow create: if signedIn();
+      // A user can update ONLY their own attendance document
+      allow update: if signedIn()
+        && resource.data.userId == request.auth.uid;
     }
 
-    // -----------------------------
-    // ATTENDANCE
-    // -----------------------------
-    match /attendance/{attId} {
-      // Agents + admins need attendance data
-      allow read, create: if signedIn();
-
-      // Updates allowed only to the user who wrote it or admin
-      allow update: if isAdmin()
-        || (signedIn() && request.auth.uid == resource.data.userId);
-    }
-
-    // -----------------------------
-    // USERS (Admin mostly)
-    // -----------------------------
+    // ------------------------------------
+    // USERS
+    // ------------------------------------
     match /users/{userId} {
 
-      // Everyone logged in can read user list (dashboard needs assignedTo names)
+      // Anyone logged in can read users (needed for assignedTo names)
       allow read: if signedIn();
 
-      // Admin full privileges
+      // Admin full control
       allow create, delete, update: if isAdmin();
 
-      // Agent can update own SAFE fields (not role, not password)
-      allow update: if (
-        signedIn()
+      // Users can update ONLY their own safe profile fields
+      allow update: if signedIn()
         && request.auth.uid == userId
-        && !('role' in request.resource.data)
-        && !('password' in request.resource.data)
-      );
-
-      // CRM backend auto-update of stats
-      allow update: if (
-        signedIn()
         && request.resource.data.diff(resource.data).changedKeys().hasOnly([
-          'assignedLeads',
-          'closedDeals',
-          'hotLeads',
-          'followUpLeads',
-          'lostLeads',
-          'inProgressLeads',
-          'statusBreakdown',
-          'updated_at'
-        ])
-      );
+          "name",
+          "phone",
+          "gender",
+          "dateOfBirth",
+          "address",
+          "active",
+          "updated_at"
+        ]);
+
+      // NOTE: agent/stat fields (assignedLeads, closedDeals, etc.) must NOT be writable by clients.
+      // Those fields should be maintained by trusted server code (Cloud Functions) using the Admin SDK.
     }
 
-    // -----------------------------
-    // LEAD NOTES (Admin only)
-    // -----------------------------
-    match /lead_notes/{docId} {
-      allow read, write: if isAdmin();
-    }
-
-    // -----------------------------
-    // LEAD PURPOSES (Admin only)
-    // -----------------------------
-    match /lead_purposes/{docId} {
-      allow read, write: if isAdmin();
-    }
-
-    // -----------------------------
-    // LEAD SOURCES (Admin only)
-    // -----------------------------
+    // ------------------------------------
+    // LEAD SOURCES
+    // ------------------------------------
     match /lead_sources/{docId} {
-      allow read, write: if isAdmin();
+      allow read: if signedIn();     // Needed for dropdowns
+      allow write: if isAdmin();
     }
 
-    // -----------------------------
-    // BANK DETAILS (Admin only)
-    // -----------------------------
+    // ------------------------------------
+    // LEAD PURPOSES
+    // ------------------------------------
+    match /lead_purposes/{docId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // ------------------------------------
+    // INVOICES
+    // ------------------------------------
+    match /invoices/{docId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // ------------------------------------
+    // BANK DETAILS
+    // ------------------------------------
     match /bankDetails/{docId} {
       allow read, write: if isAdmin();
     }
 
-    // -----------------------------
-    // INVOICES (Admin only)
-    // -----------------------------
-    match /invoices/{docId} {
-      allow read, write: if isAdmin();
-    }
-
-    // -----------------------------
-    // ADMIN SETTINGS COLLECTION
-    // -----------------------------
+    // ------------------------------------
+    // ADMIN SETTINGS
+    // ------------------------------------
     match /admin/{docId} {
       allow read, write: if isAdmin();
     }
 
-    // -----------------------------
-    // BLOCK EVERYTHING ELSE
-    // -----------------------------
+    // ------------------------------------
+    // DENY EVERYTHING ELSE
+    // ------------------------------------
     match /{path=**} {
       allow read, write: if false;
     }

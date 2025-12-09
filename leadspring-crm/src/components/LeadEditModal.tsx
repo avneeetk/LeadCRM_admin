@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Country, State, City } from "country-state-city";
 import { db } from "@/lib/firebase";
-import { collection, onSnapshot } from "firebase/firestore";
+import { collection, getDocs } from "firebase/firestore";
 import { toast } from "sonner";
 import type { Lead } from "@/lib/mockData";
 import { listenSources, listenPurposes } from "@/lib/firestore/lookups";
@@ -34,13 +34,16 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
   }, [lead]);
 
   useEffect(() => {
-    const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
+    getDocs(collection(db, "users")).then((snap) => {
       const users = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setAgents(users);
     });
     const unsubSources = listenSources(setSources);
     const unsubPurposes = listenPurposes(setPurposes);
-    return () => { unsubUsers(); unsubSources(); unsubPurposes(); };
+    return () => {
+      if (typeof unsubSources === "function") unsubSources();
+      if (typeof unsubPurposes === "function") unsubPurposes();
+    };
   }, []);
 
   useEffect(() => {

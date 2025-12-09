@@ -1,9 +1,14 @@
+// src/pages/Sales.tsx
+
 import { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table, TableBody, TableCell,
+  TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
 import { Download, Plus, Pencil, Eye, Trash2 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -56,8 +61,16 @@ export default function Sales() {
 
   // 🔹 Real-time listener
   useEffect(() => {
-    const unsub = listenInvoices(setInvoices);
-    return () => unsub();
+    const unsubOrVoid = listenInvoices(setInvoices);
+
+    // Only call if it’s a function
+    return () => {
+      if (typeof unsubOrVoid === "function") {
+        unsubOrVoid();
+      } else {
+        console.warn("listenInvoices did not return unsubscribe function");
+      }
+    };
   }, []);
 
   const filteredInvoices = invoices.filter((inv) => {
@@ -127,7 +140,6 @@ export default function Sales() {
 
   const resetForm = () => setFormData({ ...emptyForm });
 
-  // 🧾 CSV Export
   const handleExportCSV = () => {
     if (!filteredInvoices.length) return toast.info("No data to export");
     const csv = [

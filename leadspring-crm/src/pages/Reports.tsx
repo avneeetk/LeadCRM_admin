@@ -13,7 +13,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { toast } from "sonner";
 import { downloadCSV } from "@/lib/csvExport";
 import { db } from "@/lib/firebase";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, getDocs, query, orderBy, limit } from "firebase/firestore";
 
 // 🧠 Utility function for aggregations
 const getLeadStats = (leads: any[]) => {
@@ -45,9 +45,9 @@ export default function Reports() {
       setLoading(true);
       try {
         const [leadsSnap, attendanceSnap, invoicesSnap] = await Promise.all([
-          getDocs(collection(db, "leads")),
-          getDocs(collection(db, "attendance")),
-          getDocs(collection(db, "invoices")),
+          getDocs(query(collection(db, "leads"), orderBy("createdAt", "desc"), limit(500))),
+          getDocs(query(collection(db, "attendance"), orderBy("punch_in_time", "desc"), limit(500))),
+          getDocs(query(collection(db, "invoices"), orderBy("createdAt", "desc"), limit(500))),
         ]);
 
         const parseTimestamps = (docs: any[]) =>

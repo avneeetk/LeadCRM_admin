@@ -1,12 +1,15 @@
 import { db } from "@/lib/firebase";
-import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot } from "firebase/firestore";
+import { collection, addDoc, updateDoc, deleteDoc, doc, getDocs } from "firebase/firestore";
 
 // SOURCES
 export const listenSources = (callback: any) => {
-  return onSnapshot(collection(db, "lead_sources"), (snap) => {
-    const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    callback(data);
-  });
+  getDocs(collection(db, "lead_sources"))
+    .then((snap) => {
+      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      callback(data);
+    })
+    .catch(() => callback([]));
+  return () => {};
 };
 
 export const addSource = (name: string) => {
@@ -23,10 +26,13 @@ export const deleteSource = (id: string) => {
 
 // PURPOSES
 export const listenPurposes = (callback: any) => {
-  return onSnapshot(collection(db, "lead_purposes"), (snap) => {
-    const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    callback(data);
-  });
+  getDocs(collection(db, "lead_purposes"))
+    .then((snap) => {
+      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      callback(data);
+    })
+    .catch(() => callback([]));
+  return () => {};
 };
 
 export const addPurpose = (name: string) => {
