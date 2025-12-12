@@ -5,9 +5,10 @@ import { Lead } from "@/lib/mockData";
 import { Mail, Phone, DollarSign, Calendar, User, Tag } from "lucide-react";
 import { useState, useEffect } from "react";
 import { db, auth } from "@/lib/firebase";
-import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, getDoc } from "firebase/firestore";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { LeadNotesModal } from "./LeadNotesModal";
 
 interface LeadViewModalProps {
   lead: Lead | null;
@@ -52,6 +53,7 @@ function formatTimestamp(ts: any): string {
 export function LeadViewModal({ lead, open, onOpenChange }: LeadViewModalProps) {
   const [notes, setNotes] = useState<any[]>([]);
   const [newNote, setNewNote] = useState("");
+  const [notesOpen, setNotesOpen] = useState(false);
 
   // subscribe to leads/{leadId}/notes (server rules expect createdBy === auth.uid and content field)
   useEffect(() => {
@@ -81,25 +83,33 @@ export function LeadViewModal({ lead, open, onOpenChange }: LeadViewModalProps) 
     if (!newNote.trim() || !lead?.id) return;
 
     try {
-      const uid = auth?.currentUser?.uid;
-      if (!uid) {
+      const user = auth?.currentUser;
+      if (!user) {
         console.error("Cannot add note: not authenticated");
         return;
       }
 
+      const userSnap = await getDoc(doc(db, "users", user.uid));
+      const userName = userSnap.data()?.name || "Admin";
+
       const notesRef = collection(db, "leads", lead.id, "notes");
 
-      // Firestore rules expect `content` and `createdBy` for agent-created notes
       await addDoc(notesRef, {
+        // new unified schema
+        text: newNote.trim(),
+        by: user.uid,
+        createdByName: userName,
+
+        // legacy fields for backward compatibility
         content: newNote.trim(),
-        createdBy: uid,
+        createdBy: user.uid,
+
         createdAt: serverTimestamp(),
       });
 
       setNewNote("");
     } catch (err) {
       console.error("handleAddNote error:", err);
-      // If you have a toast in scope you can show a friendly error here
     }
   };
 
@@ -170,8 +180,17 @@ export function LeadViewModal({ lead, open, onOpenChange }: LeadViewModalProps) 
               </div>
             </div>
 
+            {lead.remarks && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-muted-foreground">Remarks</p>
+                <div className="p-3 bg-muted/20 rounded-md">
+                  <p className="text-sm whitespace-pre-line">{lead.remarks}</p>
+                </div>
+              </div>
+            )}
+
             {lead.updatedAt && (
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 mt-4">
                 <Calendar className="h-4 w-4 text-muted-foreground" />
                 <div>
                   <p className="text-sm text-muted-foreground">Last Updated</p>
@@ -182,38 +201,22 @@ export function LeadViewModal({ lead, open, onOpenChange }: LeadViewModalProps) 
           </div>
 
           <div className="border-t pt-4">
-            <h4 className="font-medium mb-2">Notes & Activity</h4>
-
-            <div className="space-y-3 max-h-[250px] overflow-y-auto pr-2">
-              {notes.length === 0 && (
-                <p className="text-sm text-muted-foreground">No notes yet for this lead.</p>
-              )}
-
-              {notes.map((note) => (
-                <div key={note.id} className="p-3 rounded-md border bg-muted/30">
-                  <p className="text-sm font-medium">{note.content}</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {note.createdBy === 'admin'
-                      ? 'Admin'
-                      : note.createdBy === auth?.currentUser?.uid
-                        ? 'You'
-                        : (note.createdByName || note.createdBy || 'Agent')
-                    } • {formatTimestamp(note.createdAt)}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-4 flex gap-2">
-              <Input
-                placeholder="Write a note..."
-                value={newNote}
-                onChange={(e) => setNewNote(e.target.value)}
-              />
-              <Button onClick={handleAddNote}>Send</Button>
-            </div>
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => setNotesOpen(true)}
+            >
+              View Notes
+            </Button>
           </div>
         </div>
+        {lead?.id && (
+          <LeadNotesModal
+            leadId={lead.id}
+            open={notesOpen}
+            onOpenChange={setNotesOpen}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
