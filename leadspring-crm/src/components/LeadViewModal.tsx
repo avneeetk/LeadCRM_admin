@@ -2,13 +2,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "./StatusBadge";
 import { Lead } from "@/lib/mockData";
-import { Mail, Phone, DollarSign, Calendar, User, Tag } from "lucide-react";
+import { Mail, Phone, DollarSign, Calendar, User, Tag, Clock } from "lucide-react";
 import { useState, useEffect } from "react";
 import { db, auth } from "@/lib/firebase";
 import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, getDoc } from "firebase/firestore";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { LeadNotesModal } from "./LeadNotesModal";
 
 interface LeadViewModalProps {
   lead: Lead | null;
@@ -198,25 +195,18 @@ export function LeadViewModal({ lead, open, onOpenChange }: LeadViewModalProps) 
                 </div>
               </div>
             )}
-          </div>
-
-          <div className="border-t pt-4">
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => setNotesOpen(true)}
-            >
-              View Notes
-            </Button>
+            
+            {lead.status?.toLowerCase() === 'follow up' && lead.followUpDate && (
+              <div className="flex items-center gap-3 mt-4">
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                <div>
+                  <p className="text-sm text-muted-foreground">Follow Up</p>
+                  <p className="font-medium">{formatTimestamp(lead.followUpDate)}</p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
-        {lead?.id && (
-          <LeadNotesModal
-            leadId={lead.id}
-            open={notesOpen}
-            onOpenChange={setNotesOpen}
-          />
-        )}
       </DialogContent>
     </Dialog>
   );

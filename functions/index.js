@@ -5,7 +5,7 @@
  */
 
 import { onRequest, onCall, HttpsError } from "firebase-functions/v2/https";
-import { onDocumentUpdated } from "firebase-functions/v2/firestore";
+import { onDocumentUpdated, onDocumentCreated } from "firebase-functions/v2/firestore";
 import * as logger from "firebase-functions/logger";
 import admin from "firebase-admin";
 
@@ -215,6 +215,131 @@ export const adminDeleteUser = onCall(
         throw new HttpsError("not-found", "User not found");
       }
       fail(err?.message || "Failed to delete user");
+    }
+  }
+);
+
+/* -------------------------------------------------------------------------- */
+/*                          🔔 NOTIFICATION TRIGGERS                          */
+/* -------------------------------------------------------------------------- */
+
+export const notifyAgentOnLeadAssigned = onDocumentUpdated(
+  {
+    region: "us-central1",
+    document: "leads/{leadId}",
+  },
+  async (event) => {
+    try {
+      const before = event.data?.before?.data();
+      const after = event.data?.after?.data();
+
+      if (!before || !after) return;
+
+      const beforeAssigned = before.assignedTo;
+      const afterAssigned = after.assignedTo;
+
+      // Only trigger if assignment actually changed
+      if (!afterAssigned || beforeAssigned === afterAssigned) {
+        return;
+      }
+
+      // Fetch agent
+      const agentSnap = await admin
+        .firestore()
+        .collection("users")
+        .doc(afterAssigned)
+        .get();
+
+      const fcmToken = agentSnap.data()?.fcmToken;
+      if (!fcmToken) {
+        logger.info("No FCM token for agent:", afterAssigned);
+        return;
+      }
+
+      await admin.messaging().send({
+        token: fcmToken,
+        notification: {
+          title: "New Lead Assigned",
+          body: `You have been assigned a new lead: ${after.name || "New Lead"}`,
+        },
+        data: {
+          leadId: event.params.leadId,
+          type: "lead_assigned",
+        },
+      });
+
+      logger.info("Lead assignment notification sent:", afterAssigned);
+    } catch (err) {
+      logger.error("notifyAgentOnLeadAssigned error:", err);
+    }
+  }
+);
+
+export const notifyAgentOnAdminNote = onDocumentCreated(
+  {
+    region: "us-central1",
+    document: "leads/{leadId}/notes/{noteId}",
+  },
+  async (event) => {
+    try {
+      const note = event.data?.data();
+      if (!note) return;
+
+      const noteBy = note.by;
+      if (!noteBy) return;
+
+      // 1️⃣ Check note author role
+      const authorSnap = await admin
+        .firestore()
+        .collection("users")
+        .doc(noteBy)
+        .get();
+
+      const authorRole = authorSnap.data()?.role;
+      if (authorRole !== "admin") {
+        // Only notify when ADMIN writes note
+        return;
+      }
+
+      // 2️⃣ Fetch lead
+      const leadSnap = await admin
+        .firestore()
+        .collection("leads")
+        .doc(event.params.leadId)
+        .get();
+
+      const assignedTo = leadSnap.data()?.assignedTo;
+      if (!assignedTo) return;
+
+      // 3️⃣ Fetch agent FCM token
+      const agentSnap = await admin
+        .firestore()
+        .collection("users")
+        .doc(assignedTo)
+        .get();
+
+      const fcmToken = agentSnap.data()?.fcmToken;
+      if (!fcmToken) {
+        logger.info("No FCM token for agent:", assignedTo);
+        return;
+      }
+
+      // 4️⃣ Send push notification
+      await admin.messaging().send({
+        token: fcmToken,
+        notification: {
+          title: "New note from Admin",
+          body: note.text || "You have a new message",
+        },
+        data: {
+          leadId: event.params.leadId,
+          type: "admin_note",
+        },
+      });
+
+      logger.info("Notification sent to agent:", assignedTo);
+    } catch (err) {
+      logger.error("notifyAgentOnAdminNote error:", err);
     }
   }
 );

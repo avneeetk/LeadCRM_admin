@@ -4,7 +4,7 @@
 // import { getAuth } from "firebase/auth";
 // import { getStorage } from "firebase/storage";
 
-// const firebaseConfig = {
+// const firebase = {
 //   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
 //   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
 //   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
@@ -14,12 +14,12 @@
 //   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 // };
 
-// const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+// const app = getApps().length ? getApp() : initializeApp(firebase);
 // const db = getFirestore(app); // no local cache
 // const auth = getAuth(app);
 // const storage = getStorage(app);
 
-// console.log("✅ Firebase connected to:", firebaseConfig.projectId);
+// console.log("✅ Firebase connected to:", firebase.projectId);
 
 // export { app, db, auth, storage };
 
@@ -29,7 +29,7 @@ import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { getStorage } from "firebase/storage";
 
-const firebaseConfig = {
+const firebase = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
@@ -39,7 +39,7 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
-const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+const app = getApps().length ? getApp() : initializeApp(firebase);
 const db = getFirestore(app);
 const auth = getAuth(app);
 const storage = getStorage(app);

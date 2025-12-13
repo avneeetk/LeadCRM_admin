@@ -7,13 +7,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Eye, Pencil, Plus, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Eye, Pencil, Plus, Trash2, ChevronLeft, ChevronRight, MessageSquare } from "lucide-react";
 import { db } from "@/lib/firebase";
 import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, getDocs, query, where } from "firebase/firestore";
 import { toast } from "sonner";
 import { LeadViewModal } from "@/components/LeadViewModal";
 import { LeadEditModal } from "@/components/LeadEditModal";
 import { AddLeadModal } from "@/components/AddLeadModal";
+import { LeadNotesModal } from "@/components/LeadNotesModal";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,44 +42,37 @@ interface Lead {
   state?: string;
   country?: string;
   remarks?: string;
+  notesCount?: number;
 }
 
-function NotesBadge({ leadId }: { leadId: string }) {
-  const [count, setCount] = useState(0);
+interface NotesBadgeProps {
+  leadId: string;
+  onOpenNotes: (leadId: string) => void;
+  count: number;
+}
 
-  useEffect(() => {
-    let active = true;
+function NotesBadge({ leadId, onOpenNotes, count }: NotesBadgeProps) {
+  const [isHovered, setIsHovered] = useState(false);
 
-    const fetchNotesCount = async () => {
-      try {
-        // Query the subcollection under the lead document (matches your rules)
-        const q = query(collection(db, "leads", leadId, "notes"));
-        const snapshot = await getDocs(q);
-        if (!active) return;
-        setCount(snapshot.size);
-      } catch (err: any) {
-        console.warn("fetchNotesCount error:", err);
-        // If permission denied or other error, show 0 instead of crashing
-        if (!active) return;
-        setCount(0);
-      }
-    };
 
-    if (leadId) fetchNotesCount();
-
-    return () => {
-      active = false;
-    };
-  }, [leadId]);
-
-  if (count === 0) return null;
   return (
-    <div
-      className="relative inline-flex w-6 h-6 items-center justify-center rounded-full bg-blue-600 text-white text-xs"
-      title={`${count} new notes`}
+    <button
+      className={`relative inline-flex items-center justify-center p-1 rounded-full ${count > 0 ? 'text-blue-600 hover:bg-blue-50' : 'text-gray-400 hover:text-gray-600'}`}
+      title={count > 0 ? `View ${count} note${count !== 1 ? 's' : ''}` : 'Add a note'}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpenNotes(leadId);
+      }}
     >
-      {count}
-    </div>
+      <MessageSquare className={`h-5 w-5 ${isHovered ? 'text-blue-600' : ''}`} />
+      {count > 0 && (
+        <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-xs text-white">
+          {count}
+        </span>
+      )}
+    </button>
   );
 }
 
@@ -91,6 +85,8 @@ export default function Leads() {
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [deleteLeadId, setDeleteLeadId] = useState<string | null>(null);
+  const [notesModalOpen, setNotesModalOpen] = useState(false);
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -104,9 +100,25 @@ export default function Leads() {
 
   // 🔹 Real-time Firestore Sync
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "leads"), (snap) => {
-      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Lead[];
-      setLeads(data);
+    const unsub = onSnapshot(collection(db, "leads"), async (snap) => {
+      const leadsData = [];
+      
+      for (const doc of snap.docs) {
+        const leadData = { id: doc.id, ...doc.data() } as Lead;
+        
+        // Get notes count for each lead
+        try {
+          const notesSnap = await getDocs(collection(db, "leads", doc.id, "notes"));
+          leadData.notesCount = notesSnap.size;
+        } catch (err) {
+          console.error(`Error getting notes for lead ${doc.id}:`, err);
+          leadData.notesCount = 0;
+        }
+        
+        leadsData.push(leadData);
+      }
+      
+      setLeads(leadsData);
     });
     // Sources listener
     const unsubSources = onSnapshot(collection(db, "lead_sources"), (snap) => {
@@ -286,7 +298,16 @@ export default function Leads() {
                   </TableCell>
                   <TableCell>{users.find(u => u.id === lead.assignedTo)?.name || lead.assignedTo}</TableCell>
                   <TableCell>
-                    <NotesBadge leadId={lead.id} />
+                    <div className="flex items-center gap-1">
+                      <NotesBadge 
+                        leadId={lead.id}
+                        count={lead.notesCount || 0}
+                        onOpenNotes={(id) => {
+                          setSelectedLeadId(id);
+                          setNotesModalOpen(true);
+                        }}
+                      />
+                    </div>
                   </TableCell>
                   <TableCell>
                     {lead.createdAt?.toDate
@@ -371,6 +392,15 @@ export default function Leads() {
       <LeadViewModal lead={selectedLead} open={isViewModalOpen} onOpenChange={setIsViewModalOpen} />
       <LeadEditModal lead={selectedLead} open={isEditModalOpen} onOpenChange={setIsEditModalOpen} onSave={handleSaveLead} />
       <AddLeadModal open={isAddModalOpen} onOpenChange={setIsAddModalOpen} onAddLead={handleAddLead} />
+      
+      {/* Notes Modal */}
+      {selectedLeadId && (
+        <LeadNotesModal
+          leadId={selectedLeadId}
+          open={notesModalOpen}
+          onOpenChange={setNotesModalOpen}
+        />
+      )}
 
       {/* 🔹 Delete Confirmation */}
       <AlertDialog open={!!deleteLeadId} onOpenChange={(open) => !open && setDeleteLeadId(null)}>
