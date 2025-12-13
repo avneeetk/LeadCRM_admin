@@ -144,21 +144,23 @@ service cloud.firestore {
     // ------------------------------------
     match /attendance/{attId} {
 
-      // Logged-in users can read attendance (useful for admin dashboards and employee view)
-      allow read: if signedIn();
+  // Logged-in users can read attendance
+  allow read: if signedIn();
 
-      // User can create their own attendance documents; require userId match if provided
-      allow create: if signedIn() && (
-        !('userId' in request.resource.data) || request.auth.uid == request.resource.data.userId
-      );
+  // Users can create their own attendance if user_id matches
+  allow create: if signedIn()
+    && request.resource.data.user_id == request.auth.uid;
 
-      // Admins can modify anything
-      allow update, delete: if isAdmin();
+  // Users can update only their own attendance
+  allow update: if signedIn()
+    && resource.data.user_id == request.auth.uid;
 
-      // A user can update ONLY their own attendance document
-      allow update: if signedIn()
-        && resource.data.userId == request.auth.uid;
-    }
+  // Only admins can delete
+  allow delete: if isAdmin();
+
+  // Admins can do anything
+  allow create, update, delete: if isAdmin();
+}
 
     // ------------------------------------
     // USERS
