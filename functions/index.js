@@ -534,3 +534,42 @@ export const notifyAgentOnAttendanceApproval = onDocumentUpdated(
 /* -------------------------------------------------------------------------- */
 
 logger.info("LeadCRM Firebase Functions loaded (FINAL PATCHED).");
+
+
+/* -------------------------------------------------------------------------- */
+/*                 🔗 MAGICBRICKS LEAD WEBHOOK (PHASE 1)                      */
+/* -------------------------------------------------------------------------- */
+
+export const magicbricksLeadWebhook = onRequest(
+  { region: "us-central1" },
+  async (req, res) => {
+    try {
+      if (req.method !== "POST") {
+        res.status(405).json({ error: "Method not allowed" });
+        return;
+      }
+
+      const payload = req.body;
+
+      logger.info("Magicbricks lead received", payload);
+
+      // VERY BASIC SAVE (Phase 1 – no mapping yet)
+      const leadDoc = {
+        source: "magicbricks",
+        raw_payload: payload,          // store full payload safely
+        created_at: admin.firestore.FieldValue.serverTimestamp(),
+        status: "new",
+      };
+
+      await db.collection("leads").add(leadDoc);
+
+      res.status(200).json({
+        success: true,
+        message: "Lead received successfully",
+      });
+    } catch (err) {
+      logger.error("Magicbricks webhook error", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
