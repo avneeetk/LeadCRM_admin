@@ -9,8 +9,10 @@ service cloud.firestore {
     }
 
     function userRole() {
-    return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
-    }
+  return exists(/databases/$(database)/documents/users/$(request.auth.uid))
+    ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+    : null;
+}
 
     function isAdmin() {
       return userRole() == "admin";
@@ -142,24 +144,42 @@ service cloud.firestore {
     // ------------------------------------
     // ATTENDANCE
     // ------------------------------------
-    match /attendance/{attId} {
-
-  // Logged-in users can read attendance
+    match /attendance/{attendanceId} {
+  // 🔍 Read - Any signed-in user can read attendance
   allow read: if signedIn();
 
-  // Users can create their own attendance if user_id matches
+  // ➕ Create
+  // Agents can create:
+  //  - punch-in attendance records
+  //  - leave / half-day requests
   allow create: if signedIn()
-    && request.resource.data.user_id == request.auth.uid;
+    && request.resource.data.user_id == request.auth.uid
+    && request.resource.data.record_type in ["attendance", "leave"]
+    && (request.resource.data.start_date is timestamp || !('start_date' in request.resource.data))
+    && (request.resource.data.end_date is timestamp || !('end_date' in request.resource.data));
 
-  // Users can update only their own attendance
-  allow update: if signedIn()
-    && resource.data.user_id == request.auth.uid;
+  // ✏️ Update
+  allow update: if
+    // ✅ Admin full control
+    isAdmin()
 
-  // Only admins can delete
+    // ✅ Agent punch-in / punch-out updates ONLY
+    || (
+      resource.data.user_id == request.auth.uid
+      && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+        "punch_out_time",
+        "punch_out_location",
+        "punch_out_address",
+        "updated_at",
+        "start_date",
+        "end_date"
+      ])
+      && (!('start_date' in request.resource.data) || request.resource.data.start_date is timestamp)
+      && (!('end_date' in request.resource.data) || request.resource.data.end_date is timestamp)
+    );
+
+  // ❌ Delete (Admin only)
   allow delete: if isAdmin();
-
-  // Admins can do anything
-  allow create, update, delete: if isAdmin();
 }
 
     // ------------------------------------

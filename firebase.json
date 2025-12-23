@@ -30,9 +30,5 @@
       { "source": "**", "destination": "/index.html" }
     ],
     "predeploy": ["npm --prefix leadspring-crm run build"]
-  },
-
-  "storage": {
-    "rules": "storage.rules"
   }
 }

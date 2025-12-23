@@ -345,6 +345,191 @@ export const notifyAgentOnAdminNote = onDocumentCreated(
 );
 
 /* -------------------------------------------------------------------------- */
+/*                          📱 PUSH NOTIFICATIONS                             */
+/* -------------------------------------------------------------------------- */
+
+export const notifyAgentOnLeaveDecision = onDocumentUpdated(
+  {
+    region: "us-central1",
+    document: "attendance/{attendanceId}",
+  },
+  async (event) => {
+    try {
+      const before = event.data?.before?.data();
+      const after = event.data?.after?.data();
+
+      if (!before || !after) return;
+
+      // Trigger ONLY when approval_status changes
+      if (before.approval_status === after.approval_status) return;
+
+      if (!["approved", "rejected"].includes(after.approval_status)) return;
+
+      const userId = after.user_id;
+      if (!userId) return;
+
+      // Fetch agent
+      const userSnap = await admin.firestore()
+        .collection("users")
+        .doc(userId)
+        .get();
+
+      const fcmToken = userSnap.data()?.fcmToken;
+      if (!fcmToken) return;
+
+      const statusText =
+        after.approval_status === "approved"
+          ? "approved"
+          : "rejected";
+
+      await admin.messaging().send({
+        token: fcmToken,
+        notification: {
+          title: "Leave Request Update",
+          body: `Your ${after.attendance_status} request has been ${statusText}.`,
+        },
+        data: {
+          type: "attendance_approval",
+          attendanceId: event.params.attendanceId,
+        },
+      });
+
+    } catch (err) {
+      logger.error("notifyAgentOnLeaveDecision error:", err);
+    }
+  }
+);
+
+export const notifyOnLeaveApproval = onDocumentUpdated(
+  {
+    region: "us-central1",
+    document: "attendance/{id}",
+  },
+  async (event) => {
+    try {
+      const before = event.data?.before?.data() || {};
+      const after = event.data?.after?.data() || {};
+
+      if (
+        before?.approval_status === "pending" &&
+        after?.approval_status === "approved" &&
+        after?.user_id
+      ) {
+        const userSnap = await db.collection("users").doc(after.user_id).get();
+        const token = userSnap.data()?.fcmToken;
+        
+        if (token) {
+          await admin.messaging().send({
+            token,
+            notification: {
+              title: "Leave Approved",
+              body: `Your ${after.attendance_status || 'leave'} request has been approved`,
+            },
+            data: {
+              type: "leave_approval",
+              attendanceId: event.params.id,
+            },
+          });
+          logger.info(`Leave approval notification sent to user ${after.user_id}`);
+        }
+      }
+    } catch (error) {
+      logger.error("Error in notifyOnLeaveApproval:", error);
+    }
+  }
+);
+
+export const adminApproveAttendance = onCall(
+  { cors: true, region: "us-central1" },
+  async (request) => {
+    try {
+      const auth = request.auth;
+      if (!auth) deny("Unauthenticated");
+      if (auth.token.role !== "admin") deny("Only admin can approve attendance");
+
+      const { attendanceId, action } = request.data || {};
+
+      if (!attendanceId || !["approved", "rejected"].includes(action)) {
+        invalid("attendanceId and valid action required");
+      }
+
+      const ref = db.collection("attendance").doc(attendanceId);
+      const snap = await ref.get();
+
+      if (!snap.exists) {
+        throw new HttpsError("not-found", "Attendance record not found");
+      }
+
+      const record = snap.data();
+
+      if (record.approval_status !== "pending") {
+        invalid("Only pending requests can be processed");
+      }
+
+      const update = {
+        approval_status: action,
+        updated_at: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      // If rejected, revert to present
+      if (action === "rejected") {
+        update.attendance_status = "present";
+      }
+
+      await ref.update(update);
+
+      logger.info("Attendance approval updated", {
+        attendanceId,
+        action,
+      });
+
+      return { success: true };
+
+    } catch (err) {
+      logger.error("adminApproveAttendance error:", err);
+      if (err instanceof HttpsError) throw err;
+      fail(err?.message || "Approval failed");
+    }
+  }
+);
+
+export const notifyAgentOnAttendanceApproval = onDocumentUpdated(
+  {
+    region: "us-central1",
+    document: "attendance/{attendanceId}",
+  },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    if (!before || !after) return;
+
+    // Trigger only when pending → approved/rejected
+    if (
+      before.approval_status === "pending" &&
+      ["approved", "rejected"].includes(after.approval_status)
+    ) {
+      const userId = after.user_id;
+
+      const userSnap = await admin.firestore().collection("users").doc(userId).get();
+      const token = userSnap.data()?.fcmToken;
+      if (!token) return;
+
+      await admin.messaging().send({
+        token,
+        notification: {
+          title: "Attendance Update",
+          body: `Your ${after.attendance_status} request was ${after.approval_status}`,
+        },
+        data: {
+          type: "attendance_approval",
+          attendanceId: event.params.attendanceId,
+        },
+      });
+    }
+  }
+);
+
+/* -------------------------------------------------------------------------- */
 /*                             ✔ EXPORT CHECK                                 */
 /* -------------------------------------------------------------------------- */
 

@@ -1,3 +1,5 @@
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 // src/pages/Attendance.tsx
 import { useState, useEffect } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
@@ -30,6 +32,8 @@ import {
 
 import { listenAttendance, addAttendance, updateAttendance, deleteAttendanceRecord } from "@/lib/firestore/attendance";
 
+import { EditAttendanceModal } from "@/components/AttendanceEditModal.tsx";
+
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { format, isSameDay } from "date-fns";
@@ -61,12 +65,25 @@ export default function Attendance() {
 
   // Apply date range filter
   const applyDateRange = () => {
-    setDateRange(prev => ({
-      ...prev,
-      from: prev.tempFrom,
-      to: prev.tempTo,
-      isOpen: false
-    }));
+    setDateRange(prev => {
+      // If both dates are set, ensure 'from' is before 'to'
+      let from = prev.tempFrom;
+      let to = prev.tempTo;
+      
+      if (from && to && from > to) {
+        // Swap dates if they're in the wrong order
+        [from, to] = [to, from];
+      }
+      
+      return {
+        ...prev,
+        from,
+        to,
+        tempFrom: from, // Update temp values to match
+        tempTo: to,     // Update temp values to match
+        isOpen: false
+      };
+    });
   };
 
   // Reset date range filter
@@ -86,7 +103,7 @@ export default function Attendance() {
 
   // Modals
   const [addModal, setAddModal] = useState(false);
-  const [editRecord, setEditRecord] = useState<any>(null);
+  const [editAttendance, setEditAttendance] = useState<any>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
   // Manual form
@@ -104,67 +121,161 @@ export default function Attendance() {
     const unsub = listenAttendance(
       (data) => {
         // normalize incoming records to a consistent shape (camelCase fields)
-        const normalized = data.map((d: any) => {
-          const name =
-            d.name ||
-            d.employeeName ||
-            d.employee_name ||
-            d.userName ||
-            d.user_name ||
-            d.employee ||
-            "";
+        const resolveNames = async () => {
+          const resolved = await Promise.all(
+            data.map(async (d: any) => {
+              const userId =
+                d.user_id ||
+                d.userId ||
+                d.__raw?.user_id ||
+                d.__raw?.userId ||
+                "";
 
-          const punchIn =
-            d.punch_in_time ||
-            d.punchInTime ||
-            d.punchIn ||
-            d.punch_in ||
-            null;
+              let name =
+                d.name ||
+                d.employeeName ||
+                d.employee_name ||
+                d.userName ||
+                d.user_name ||
+                "";
 
-          const punchOut =
-            d.punch_out_time ||
-            d.punchOutTime ||
-            d.punchOut ||
-            d.punch_out ||
-            null;
+              let email = "";
 
-          const date =
-            d.date ||
-            (punchIn?.toDate ? punchIn.toDate() : null);
+              if (!name && userId) {
+                try {
+                  const userSnap = await getDoc(doc(db, "users", userId));
+                  const userData = userSnap.data();
+                  name = userData?.name || "Unknown";
+                  email = userData?.email || "";
+                } catch {
+                  name = "Unknown";
+                  email = "";
+                }
+              }
 
-          const status =
-            d.status ||
-            d.attendanceStatus ||
-            d.state ||
-            "present";
+              const punchIn =
+                d.punch_in_time ||
+                d.punchInTime ||
+                d.punchIn ||
+                d.punch_in ||
+                null;
 
-          return {
-            id: d.id || d.__raw?.id || d.docId || "",
-            name,
-            punchInTime: punchIn,
-            punchOutTime: punchOut,
-            date,
-            location: d.location || d.place || d.address || "",
-            status,
-            selfie_base64: d.selfie_base64 || d.selfieBase64 || d.selfie || null,
-            __raw: d,
-          };
-        });
+              const punchOut =
+                d.punch_out_time ||
+                d.punchOutTime ||
+                d.punchOut ||
+                d.punch_out ||
+                null;
 
-        setRecords(normalized);
+              // Ensure we have a proper Date object for filtering
+              let date = null;
+
+              if (d.day_start) {
+                date = d.day_start.toDate
+                  ? d.day_start.toDate()
+                  : new Date(d.day_start);
+              } else if (punchIn) {
+                date = punchIn.toDate
+                  ? punchIn.toDate()
+                  : new Date(punchIn);
+              } else if (d.date) {
+                date = d.date.toDate
+                  ? d.date.toDate()
+                  : new Date(d.date);
+              }
+
+              let status = "present";
+
+              const attendanceStatus =
+                d.attendance_status ||
+                d.attendanceStatus ||
+                "present";
+
+              const approvalStatus =
+                d.approval_status ||
+                d.approvalStatus ||
+                "none";
+
+              const recordType =
+                d.record_type ||
+                d.recordType ||
+                (attendanceStatus === "leave" || attendanceStatus === "half_day"
+                  ? "leave"
+                  : "attendance");
+
+              // Approval status logic for visible status
+              if (approvalStatus === "pending") {
+                status = "pending";
+              } else if (approvalStatus === "approved") {
+                status = attendanceStatus; // leave / half_day
+              } else if (approvalStatus === "rejected") {
+                status = "rejected";
+              } else {
+                status = "present";
+              }
+
+              return {
+                id: d.__raw?.id || d.id || d.docId || "",
+                name,
+                email,
+                punchInTime: punchIn,
+                punchOutTime: punchOut,
+                date,
+                punchInLocation: d.__raw?.punch_in_address || "—",
+                punchOutLocation: d.__raw?.punch_out_address || "—",
+                status,
+                selfie_base64: d.selfie_base64 || d.selfieBase64 || d.selfie || null,
+                attendance_status: attendanceStatus,
+                approval_status: approvalStatus,
+                record_type: recordType,
+                recordType,
+                hasPendingApproval:
+                  approvalStatus === "pending" &&
+                  (attendanceStatus === "leave" || attendanceStatus === "half_day"),
+                __raw: d,
+              };
+            })
+          );
+
+          setRecords(resolved);
+        };
+
+        resolveNames();
       },
-      dateRange.from,
-      dateRange.to
+      { 
+        realtime: true,
+        startDate: dateRange.from,
+        endDate: dateRange.to
+      }
     );
 
     return () => unsub();
-  }, [dateRange.from, dateRange.to]);
+  }, [dateRange.from, dateRange.to]); // Add dateRange dependency
 
   // Filter logic
   const filtered = records.filter((r) => {
     const matchSearch = r.name?.toLowerCase().includes(search.toLowerCase());
     const matchStatus = statusFilter === "all" || r.status === statusFilter;
-    return matchSearch && matchStatus;
+    
+    // Date filtering logic
+    let matchDate = true;
+    if (dateRange.from || dateRange.to) {
+      const recordDate = r.date?.toDate ? r.date.toDate() : r.date;
+      
+      if (dateRange.from && recordDate) {
+        const fromDate = new Date(dateRange.from);
+        fromDate.setHours(0, 0, 0, 0);
+        matchDate = matchDate && recordDate >= fromDate;
+      }
+      
+      if (dateRange.to && recordDate) {
+        const toDate = new Date(dateRange.to);
+        toDate.setHours(23, 59, 59, 999);
+        matchDate = matchDate && recordDate <= toDate;
+      }
+    }
+    
+    return matchSearch && matchStatus && matchDate;
   });
 
   // Pagination
@@ -192,13 +303,73 @@ export default function Attendance() {
   };
 
   // Export XLS
-  const exportXLS = () => {
-    const sheet = XLSX.utils.json_to_sheet(filtered);
-    const book = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(book, sheet, "Attendance");
-    const buf = XLSX.write(book, { type: "array", bookType: "xlsx" });
-    saveAs(new Blob([buf], { type: "application/octet-stream" }), "attendance.xlsx");
-  };
+const exportXLS = () => {
+  if (!filtered.length) {
+    toast.error("No records to export");
+    return;
+  }
+
+  const rows = filtered.map((r) => {
+    const date =
+      r.date instanceof Date
+        ? r.date
+        : r.punchInTime?.toDate
+        ? r.punchInTime.toDate()
+        : null;
+
+    return {
+      "Attendance Date": date ? format(date, "yyyy-MM-dd") : "",
+      "Sub User Name": r.name || "",
+      "Email ID": r.email || "",
+      "Punch IN":
+        r.punchInTime?.seconds
+          ? format(new Date(r.punchInTime.seconds * 1000), "HH:mm")
+          : "",
+      "Punch Out":
+        r.punchOutTime?.seconds
+          ? format(new Date(r.punchOutTime.seconds * 1000), "HH:mm")
+          : "",
+      "Punch IN Location": String(r.punchInLocation || "").slice(0, 200),
+      "Punch Out Location": String(r.punchOutLocation || "").slice(0, 200),
+      Status: r.status || "present",
+    };
+  });
+
+  const sheet = XLSX.utils.json_to_sheet(rows);
+
+  // 🎨 Column widths
+  sheet["!cols"] = [
+    { wch: 14 }, // Date
+    { wch: 18 }, // Name
+    { wch: 26 }, // Email
+    { wch: 10 }, // Punch In
+    { wch: 10 }, // Punch Out
+    { wch: 30 }, // In Location
+    { wch: 30 }, // Out Location
+    { wch: 12 }, // Status
+  ];
+
+  // 🎨 Header styling
+  const range = XLSX.utils.decode_range(sheet["!ref"]!);
+  for (let C = range.s.c; C <= range.e.c; ++C) {
+    const cell = sheet[XLSX.utils.encode_cell({ r: 0, c: C })];
+    if (!cell) continue;
+
+    cell.s = {
+      font: { bold: true, color: { rgb: "FFFFFF" } },
+      fill: { fgColor: { rgb: "1976D2" } }, // Blue header
+      alignment: { horizontal: "center" },
+    };
+  }
+
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, sheet, "Attendance");
+
+  XLSX.writeFile(
+    book,
+    `attendance_${format(new Date(), "yyyyMMdd_HHmm")}.xlsx`
+  );
+};
 
   // Add manual CRM entry
   const handleAdd = async () => {
@@ -231,18 +402,6 @@ export default function Attendance() {
     }
   };
 
-  // Update attendance
-  const handleEdit = async () => {
-    if (!editRecord?.id) return;
-
-    try {
-      await updateAttendance(editRecord.id, editRecord);
-      toast.success("Updated successfully");
-      setEditRecord(null);
-    } catch {
-      toast.error("Failed to update");
-    }
-  };
 
   // Delete
   const handleDelete = async () => {
@@ -397,6 +556,7 @@ export default function Attendance() {
             </div>
 
             {/* TABLE */}
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -405,7 +565,8 @@ export default function Attendance() {
                   <TableHead>Date</TableHead>
                   <TableHead>Punch In</TableHead>
                   <TableHead>Punch Out</TableHead>
-                  <TableHead>Location</TableHead>
+                  <TableHead>Punch In Location</TableHead>
+                  <TableHead>Punch Out Location</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
@@ -456,21 +617,37 @@ export default function Attendance() {
                             : r.punchOut || "—"}
                       </TableCell>
 
-                      <TableCell>{r.location || "—"}</TableCell>
+                      <TableCell>{r.punchInLocation || "—"}</TableCell>
+                      <TableCell>{r.punchOutLocation || "—"}</TableCell>
 
                       <TableCell>
-                        <Badge>{r.status || "present"}</Badge>
+                        <Badge
+                          className={`px-3 py-1 text-xs font-medium rounded-full capitalize
+    ${r.status === "present" ? "bg-green-500 text-white" : ""}
+    ${r.status === "leave" ? "bg-purple-500 text-white" : ""}
+    ${r.status === "half_day" || r.status === "half-day" ? "bg-orange-500 text-white" : ""}
+    ${r.status === "pending" ? "bg-blue-500 text-white animate-pulse" : ""}
+    ${r.status === "rejected" ? "bg-red-500 text-white" : ""}
+  `}
+                        >
+                          {r.status || "present"}
+                        </Badge>
                       </TableCell>
 
                       <TableCell>
                         <div className="flex gap-2">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setEditRecord(r)}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
+                          <div className="relative">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setEditAttendance(r)}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            {r.hasPendingApproval && (
+                              <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
+                            )}
+                          </div>
                           <Button
                             variant="ghost"
                             size="icon"
@@ -485,6 +662,7 @@ export default function Attendance() {
                 })}
               </TableBody>
             </Table>
+            </div>
 
             {/* Pagination controls */}
             <div className="flex justify-end gap-2 mt-4">
@@ -594,43 +772,12 @@ export default function Attendance() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Modal */}
-      <Dialog open={!!editRecord} onOpenChange={() => setEditRecord(null)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Edit Attendance</DialogTitle></DialogHeader>
 
-          {editRecord && (
-            <div className="grid gap-3 py-4">
-              <Label>Name</Label>
-              <Input
-                value={editRecord.name}
-                onChange={(e) => setEditRecord({ ...editRecord, name: e.target.value })}
-              />
-
-              <Label>Punch In</Label>
-              <Input
-                value={editRecord.punchIn}
-                onChange={(e) => setEditRecord({ ...editRecord, punchIn: e.target.value })}
-              />
-
-              <Label>Punch Out</Label>
-              <Input
-                value={editRecord.punchOut}
-                onChange={(e) => setEditRecord({ ...editRecord, punchOut: e.target.value })}
-              />
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditRecord(null)}>
-              Cancel
-            </Button>
-            <Button onClick={handleEdit}>
-              Save
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <EditAttendanceModal
+        open={!!editAttendance}
+        attendance={editAttendance}
+        onOpenChange={() => setEditAttendance(null)}
+      />
 
       {/* Delete confirmation */}
       <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
