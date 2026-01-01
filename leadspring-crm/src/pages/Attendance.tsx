@@ -170,18 +170,28 @@ export default function Attendance() {
               // Ensure we have a proper Date object for filtering
               let date = null;
 
-              if (d.day_start) {
-                date = d.day_start.toDate
-                  ? d.day_start.toDate()
-                  : new Date(d.day_start);
-              } else if (punchIn) {
+              const startDate =
+                d.startDate ||
+                d.start_date ||
+                d.__raw?.start_date ||
+                d.__raw?.day_start ||
+                null;
+
+              const endDate =
+                d.endDate ||
+                d.end_date ||
+                d.__raw?.end_date ||
+                d.__raw?.day_end ||
+                null;
+
+              if (punchIn) {
                 date = punchIn.toDate
                   ? punchIn.toDate()
                   : new Date(punchIn);
-              } else if (d.date) {
-                date = d.date.toDate
-                  ? d.date.toDate()
-                  : new Date(d.date);
+              } else if (startDate) {
+                date = startDate.toDate
+                  ? startDate.toDate()
+                  : new Date(startDate);
               }
 
               let status = "present";
@@ -221,6 +231,8 @@ export default function Attendance() {
                 punchInTime: punchIn,
                 punchOutTime: punchOut,
                 date,
+                startDate,
+                endDate,
                 punchInLocation: d.__raw?.punch_in_address || "—",
                 punchOutLocation: d.__raw?.punch_out_address || "—",
                 status,
@@ -594,11 +606,23 @@ const exportXLS = () => {
                       <TableCell>{r.name}</TableCell>
 
                       <TableCell>
-                        {r.punchInTime?.seconds
-                          ? format(new Date(r.punchInTime.seconds * 1000), "PPP")
-                          : r.date instanceof Date
-                            ? format(r.date, "PPP")
-                            : r.date || "—"}
+                        {r.startDate && r.endDate ? (
+                          r.startDate.toDate && r.endDate.toDate ? (
+                            `${format(r.startDate.toDate(), "PPP")} – ${format(
+                              r.endDate.toDate(),
+                              "PPP"
+                            )}`
+                          ) : (
+                            `${format(new Date(r.startDate), "PPP")} – ${format(
+                              new Date(r.endDate),
+                              "PPP"
+                            )}`
+                          )
+                        ) : r.date instanceof Date ? (
+                          format(r.date, "PPP")
+                        ) : (
+                          "—"
+                        )}
                       </TableCell>
 
                       <TableCell>
