@@ -90,13 +90,13 @@ export function useDashboardData(timeRangeDays = 0) {
     setLoading(true);
 
     // Leads (one-time fetch to reduce reads)
-    getDocs(query(collection(db, "leads"), orderBy("createdAt", "desc"), limit(100)))
+    getDocs(query(collection(db, "leads"), orderBy("created_at", "desc"), limit(100)))
       .then((snap) => {
         const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Lead[];
 
         const filtered = cutoffDate
           ? arr.filter((l) => {
-              const created = normalizeTimestamp(l.createdAt);
+              const created = normalizeTimestamp(l.createdAt ?? (l as any).created_at);
               return created ? created >= cutoffDate : true;
             })
           : arr;
@@ -166,7 +166,7 @@ export function useDashboardData(timeRangeDays = 0) {
       closedWithDates.length > 0
         ? Math.round(
             closedWithDates.reduce((acc, l) => {
-              const created = normalizeTimestamp(l.createdAt)?.getTime() || 0;
+              const created = normalizeTimestamp(l.createdAt ?? (l as any).created_at)?.getTime() || 0;
               const updated = normalizeTimestamp(l.updatedAt)?.getTime() || 0;
               return acc + (updated - created) / (1000 * 60 * 60 * 24);
             }, 0) / closedWithDates.length
@@ -234,7 +234,7 @@ export function useDashboardData(timeRangeDays = 0) {
       .map((l) => ({
         ...l,
         assignedToName: getAgentName(l.assignedTo),
-        _createdAt: normalizeTimestamp(l.createdAt),
+        _createdAt: normalizeTimestamp(l.createdAt ?? (l as any).created_at),
       }))
       .sort((a, b) => {
         const ta = a._createdAt?.getTime() || 0;

@@ -537,7 +537,7 @@ logger.info("LeadCRM Firebase Functions loaded (FINAL PATCHED).");
 
 
 /* -------------------------------------------------------------------------- */
-/*                 🔗 MAGICBRICKS LEAD WEBHOOK (PHASE 1)                      */
+/*                 🔗 MAGICBRICKS LEAD WEBHOOK (PHASE 1 – FIXED)               */
 /* -------------------------------------------------------------------------- */
 
 export const magicbricksLeadWebhook = onRequest(
@@ -545,31 +545,45 @@ export const magicbricksLeadWebhook = onRequest(
   async (req, res) => {
     try {
       if (req.method !== "POST") {
-        res.status(405).json({ error: "Method not allowed" });
-        return;
+        return res.status(405).json({ error: "Method not allowed" });
       }
 
-      const payload = req.body;
+      const payload = req.body || {};
 
       logger.info("Magicbricks lead received", payload);
 
-      // VERY BASIC SAVE (Phase 1 – no mapping yet)
+      // ✅ MINIMUM REQUIRED MAPPING FOR ADMIN UI
       const leadDoc = {
-        source: "magicbricks",
-        raw_payload: payload,          // store full payload safely
-        created_at: admin.firestore.FieldValue.serverTimestamp(),
+        // Core lead fields
+        name: payload.name || "",
+        phone: payload.phone || "",
+        email: payload.email || "",
+        city: payload.city || "",
+        project: payload.project || "",
+
+        // System fields
+        source: payload.source || "Magicbricks",
         status: "new",
+        assignedTo: null,
+
+        // Timestamps
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+
+        // Debug & safety
+        raw_source: "magicbricks",
+        raw_payload: payload,
       };
 
       await db.collection("leads").add(leadDoc);
 
-      res.status(200).json({
+      return res.status(200).json({
         success: true,
         message: "Lead received successfully",
       });
     } catch (err) {
       logger.error("Magicbricks webhook error", err);
-      res.status(500).json({ error: "Internal server error" });
+      return res.status(500).json({ error: "Internal server error" });
     }
   }
 );

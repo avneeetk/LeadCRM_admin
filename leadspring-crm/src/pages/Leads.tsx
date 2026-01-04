@@ -104,7 +104,32 @@ export default function Leads() {
       const leadsData = [];
       
       for (const doc of snap.docs) {
-        const leadData = { id: doc.id, ...doc.data() } as Lead;
+        const data = doc.data();
+        const leadData = {
+          id: doc.id,
+
+          // Normalize Magicbricks + manual leads
+          name: data.name || data.raw_payload?.name || "",
+          phone: data.phone || data.raw_payload?.phone || "",
+          email: data.email || data.raw_payload?.email || "",
+          city: data.city || data.raw_payload?.city || "",
+
+          source: data.source || data.raw_payload?.source || "",
+          status: data.status || "new",
+          assignedTo: data.assignedTo || "",
+
+          // Support both createdAt (manual) & created_at (webhook)
+          createdAt: data.createdAt || data.created_at || null,
+          updatedAt: data.updatedAt || data.updated_at || null,
+
+          purpose: data.purpose || "",
+          address: data.address || "",
+          state: data.state || "",
+          country: data.country || "",
+          remarks: data.remarks || "",
+
+          ...data,
+        } as Lead;
         
         // Get notes count for each lead
         try {
@@ -117,7 +142,12 @@ export default function Leads() {
         
         leadsData.push(leadData);
       }
-      
+      // Sort by createdAt/created_at descending (latest first)
+      leadsData.sort((a: any, b: any) => {
+        const ta = a.createdAt?.toMillis?.() ?? a.created_at?.toMillis?.() ?? 0;
+        const tb = b.createdAt?.toMillis?.() ?? b.created_at?.toMillis?.() ?? 0;
+        return tb - ta;
+      });
       setLeads(leadsData);
     });
     // Sources listener
@@ -177,10 +207,19 @@ export default function Leads() {
 
   // 🔹 Filtering Logic
   const filteredLeads = leads.filter((lead) => {
+    const q = searchQuery.trim().toLowerCase();
     const matchesSearch =
-      lead.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      lead.phone?.includes(searchQuery) ||
-      lead.email?.toLowerCase().includes(searchQuery.toLowerCase());
+      !q ||
+      lead.name?.toLowerCase().includes(q) ||
+      lead.phone?.toLowerCase().includes(q) ||
+      lead.email?.toLowerCase().includes(q) ||
+      lead.source?.toLowerCase().includes(q) ||
+      lead.status?.toLowerCase().includes(q) ||
+      lead.assignedTo?.toLowerCase().includes(q) ||
+      lead.purpose?.toLowerCase().includes(q) ||
+      lead.city?.toLowerCase().includes(q) ||
+      lead.state?.toLowerCase().includes(q) ||
+      lead.country?.toLowerCase().includes(q);
     const matchesStatus = statusFilter === "all" || lead.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -289,12 +328,23 @@ export default function Leads() {
             <TableBody>
               {currentLeads.map((lead) => (
                 <TableRow key={lead.id}>
-                  <TableCell>{lead.name}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      {lead.status === "new" && !lead.assignedTo && (
+                        <span className="h-2 w-2 rounded-full bg-blue-600" />
+                      )}
+                      <span>{lead.name}</span>
+                    </div>
+                  </TableCell>
                   <TableCell>{lead.phone}</TableCell>
                   <TableCell>{lead.email}</TableCell>
                   <TableCell>{lead.source}</TableCell>
                   <TableCell>
-                    <Badge variant="outline">{lead.status}</Badge>
+                    {lead.status === "new" && !lead.assignedTo ? (
+                      <Badge className="bg-blue-600 text-white">NEW</Badge>
+                    ) : (
+                      <Badge variant="outline">{lead.status}</Badge>
+                    )}
                   </TableCell>
                   <TableCell>{users.find(u => u.id === lead.assignedTo)?.name || lead.assignedTo}</TableCell>
                   <TableCell>
