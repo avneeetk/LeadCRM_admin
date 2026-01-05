@@ -11,6 +11,7 @@ import { collection, getDocs } from "firebase/firestore";
 import { toast } from "sonner";
 import type { Lead } from "@/lib/mockData";
 import { listenSources, listenPurposes } from "@/lib/firestore/lookups";
+import { listenLeadStatuses } from "@/lib/firestore/leadStatus";
 
 interface LeadEditModalProps {
   lead: Lead | null;
@@ -24,6 +25,7 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
   const [agents, setAgents] = useState<any[]>([]);
   const [sources, setSources] = useState<any[]>([]);
   const [purposes, setPurposes] = useState<any[]>([]);
+  const [statuses, setStatuses] = useState<any[]>([]);
   const [states, setStates] = useState<any[]>([]);
   const [cities, setCities] = useState<any[]>([]);
   const countries = Country.getAllCountries();
@@ -40,9 +42,11 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
     });
     const unsubSources = listenSources(setSources);
     const unsubPurposes = listenPurposes(setPurposes);
+    const unsubStatuses = listenLeadStatuses(setStatuses);
     return () => {
       if (typeof unsubSources === "function") unsubSources();
       if (typeof unsubPurposes === "function") unsubPurposes();
+      if (typeof unsubStatuses === "function") unsubStatuses();
     };
   }, []);
 
@@ -114,15 +118,26 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Status</Label>
-              <Select value={formData.status} onValueChange={(v) => setFormData({ ...formData, status: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+              <Select value={formData.status || ""} onValueChange={(v) => setFormData({ ...formData, status: v })}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select Status" />
+                </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="new">new</SelectItem>
-                  <SelectItem value="contacted">contacted</SelectItem>
-                  <SelectItem value="follow-up">follow-up</SelectItem>
-                  <SelectItem value="hot">hot</SelectItem>
-                  <SelectItem value="closed">closed</SelectItem>
-                  <SelectItem value="lost">lost</SelectItem>
+                  {statuses.length === 0 && (
+                    <div className="px-3 py-2 text-sm text-muted-foreground">
+                      No statuses configured
+                    </div>
+                  )}
+                  {statuses.map((s) => {
+                    if (!s || !s.name) return null;
+                    const name = String(s.name).trim();
+                    if (!name) return null;
+                    return (
+                      <SelectItem key={s.id} value={name}>
+                        {name}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             </div>

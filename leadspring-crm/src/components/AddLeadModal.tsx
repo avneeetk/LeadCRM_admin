@@ -10,6 +10,7 @@ import { db } from "@/lib/firebase";
 import { collection, getDocs, addDoc, serverTimestamp } from "firebase/firestore";
 import { Country, State, City } from "country-state-city";
 import { listenSources, listenPurposes } from "@/lib/firestore/lookups";
+import { listenLeadStatuses } from "@/lib/firestore/leadStatus";
 
 interface AddLeadModalProps {
   open: boolean;
@@ -40,7 +41,6 @@ export function AddLeadModal({ open, onOpenChange, onAddLead }: AddLeadModalProp
     remarks: "",
   });
 
-  const statuses = ["new", "contacted", "follow-up", "hot", "closed", "lost"];
   const countries = Country.getAllCountries();
 
   // 🔹 Fetch agents dynamically from Firestore
@@ -63,13 +63,16 @@ export function AddLeadModal({ open, onOpenChange, onAddLead }: AddLeadModalProp
 
   const [sources, setSources] = useState([]);
   const [purposes, setPurposes] = useState([]);
+  const [leadStatuses, setLeadStatuses] = useState<any[]>([]);
 
   useEffect(() => {
     const unsub1 = listenSources(setSources);
     const unsub2 = listenPurposes(setPurposes);
+    const unsub3 = listenLeadStatuses(setLeadStatuses);
     return () => {
       if (typeof unsub1 === "function") unsub1();
       if (typeof unsub2 === "function") unsub2();
+      if (typeof unsub3 === "function") unsub3();
     };
   }, []);
 
@@ -234,7 +237,7 @@ export function AddLeadModal({ open, onOpenChange, onAddLead }: AddLeadModalProp
               <Select value={formData.status} onValueChange={(v) => setFormData({ ...formData, status: v })}>
                 <SelectTrigger><SelectValue placeholder="Select Status" /></SelectTrigger>
                 <SelectContent>
-                  {statuses.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  {leadStatuses.map((s) => <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

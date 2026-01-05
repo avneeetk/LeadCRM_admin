@@ -95,60 +95,59 @@ export default function Leads() {
   const [sources, setSources] = useState<any[]>([]);
   const [purposes, setPurposes] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
+  const [statuses, setStatuses] = useState<any[]>([]);
   const [newSource, setNewSource] = useState("");
   const [newPurpose, setNewPurpose] = useState("");
+  const [newStatus, setNewStatus] = useState("");
 
   // 🔹 Real-time Firestore Sync
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "leads"), async (snap) => {
-      const leadsData = [];
-      
-      for (const doc of snap.docs) {
-        const data = doc.data();
-        const leadData = {
-          id: doc.id,
-
-          // Normalize Magicbricks + manual leads
-          name: data.name || data.raw_payload?.name || "",
-          phone: data.phone || data.raw_payload?.phone || "",
-          email: data.email || data.raw_payload?.email || "",
-          city: data.city || data.raw_payload?.city || "",
-
-          source: data.source || data.raw_payload?.source || "",
-          status: data.status || "new",
-          assignedTo: data.assignedTo || "",
-
-          // Support both createdAt (manual) & created_at (webhook)
-          createdAt: data.createdAt || data.created_at || null,
-          updatedAt: data.updatedAt || data.updated_at || null,
-
-          purpose: data.purpose || "",
-          address: data.address || "",
-          state: data.state || "",
-          country: data.country || "",
-          remarks: data.remarks || "",
-
-          ...data,
-        } as Lead;
-        
-        // Get notes count for each lead
-        try {
-          const notesSnap = await getDocs(collection(db, "leads", doc.id, "notes"));
-          leadData.notesCount = notesSnap.size;
-        } catch (err) {
-          console.error(`Error getting notes for lead ${doc.id}:`, err);
-          leadData.notesCount = 0;
-        }
-        
-        leadsData.push(leadData);
-      }
-      // Sort by createdAt/created_at descending (latest first)
-      leadsData.sort((a: any, b: any) => {
-        const ta = a.createdAt?.toMillis?.() ?? a.created_at?.toMillis?.() ?? 0;
-        const tb = b.createdAt?.toMillis?.() ?? b.created_at?.toMillis?.() ?? 0;
-        return tb - ta;
-      });
-      setLeads(leadsData);
+    // To avoid memory leaks with async in onSnapshot, use a flag
+    let cancelled = false;
+    const unsub = onSnapshot(collection(db, "leads"), (snap) => {
+      // For each doc, fetch notes count in parallel, then setLeads after all are ready
+      const fetchLeadsWithNotes = async () => {
+        const leadsData: Lead[] = await Promise.all(
+          snap.docs.map(async (docSnap) => {
+            const data = docSnap.data();
+            const leadData: Lead = {
+              id: docSnap.id,
+              name: data.name || data.raw_payload?.name || "",
+              phone: data.phone || data.raw_payload?.phone || "",
+              email: data.email || data.raw_payload?.email || "",
+              city: data.city || data.raw_payload?.city || "",
+              source: data.source || data.raw_payload?.source || "",
+              status: String(data.status || "new").toLowerCase(),
+              assignedTo: data.assignedTo || "",
+              createdAt: data.createdAt || data.created_at || null,
+              updatedAt: data.updatedAt || data.updated_at || null,
+              purpose: data.purpose || "",
+              address: data.address || "",
+              state: data.state || "",
+              country: data.country || "",
+              remarks: data.remarks || "",
+              ...data,
+            };
+            // Get notes count for each lead
+            try {
+              const notesSnap = await getDocs(collection(db, "leads", docSnap.id, "notes"));
+              leadData.notesCount = notesSnap.size;
+            } catch (err) {
+              console.error(`Error getting notes for lead ${docSnap.id}:`, err);
+              leadData.notesCount = 0;
+            }
+            return leadData;
+          })
+        );
+        // Sort by createdAt/created_at descending (latest first)
+        leadsData.sort((a: any, b: any) => {
+          const ta = a.createdAt?.toMillis?.() ?? a.created_at?.toMillis?.() ?? 0;
+          const tb = b.createdAt?.toMillis?.() ?? b.created_at?.toMillis?.() ?? 0;
+          return tb - ta;
+        });
+        if (!cancelled) setLeads(leadsData);
+      };
+      fetchLeadsWithNotes();
     });
     // Sources listener
     const unsubSources = onSnapshot(collection(db, "lead_sources"), (snap) => {
@@ -158,15 +157,26 @@ export default function Leads() {
     const unsubPurposes = onSnapshot(collection(db, "lead_purposes"), (snap) => {
       setPurposes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
+    // Statuses listener
+    const unsubStatuses = onSnapshot(collection(db, "lead_statuses"), (snap) => {
+      setStatuses(
+        snap.docs.map(d => ({
+          id: d.id,
+          name: String(d.data().name || "").toLowerCase(),
+        }))
+      );
+    });
     // Users loader
     (async () => {
       const snapUsers = await getDocs(collection(db, "users"));
       setUsers(snapUsers.docs.map(d => ({ id: d.id, ...d.data() })));
     })();
     return () => {
+      cancelled = true;
       unsub();
       unsubSources();
       unsubPurposes();
+      unsubStatuses();
     };
   }, []);
 
@@ -220,7 +230,9 @@ export default function Leads() {
       lead.city?.toLowerCase().includes(q) ||
       lead.state?.toLowerCase().includes(q) ||
       lead.country?.toLowerCase().includes(q);
-    const matchesStatus = statusFilter === "all" || lead.status === statusFilter;
+    const matchesStatus =
+      statusFilter === "all" ||
+      lead.status?.toLowerCase() === statusFilter.toLowerCase();
     return matchesSearch && matchesStatus;
   });
 
@@ -234,7 +246,7 @@ export default function Leads() {
     setCurrentPage(page);
   };
 
-  const statuses = ["all", "new", "contacted", "follow-up", "hot", "closed", "lost"];
+  const statusesList = ["all", "new", "contacted", "follow-up", "hot", "closed", "lost"];
 
   // Sources & Purposes helpers
   const addSource = async () => {
@@ -257,12 +269,27 @@ export default function Leads() {
     await deleteDoc(doc(db, "lead_purposes", id));
   };
 
+  // Status helpers
+  const addStatus = async () => {
+    if (!newStatus.trim()) return;
+    await addDoc(collection(db, "lead_statuses"), {
+      name: newStatus,
+      createdAt: serverTimestamp(),
+    });
+    setNewStatus("");
+  };
+
+  const deleteStatus = async (id: string) => {
+    await deleteDoc(doc(db, "lead_statuses", id));
+  };
+
   return (
     <DashboardLayout title="Lead Manager">
       <Tabs defaultValue="leads">
         <TabsList>
           <TabsTrigger value="leads">Leads</TabsTrigger>
           <TabsTrigger value="lookups">Sources &amp; Purposes</TabsTrigger>
+          <TabsTrigger value="status">Status</TabsTrigger>
         </TabsList>
 
         <TabsContent value="leads">
@@ -283,11 +310,16 @@ export default function Leads() {
                 <SelectValue placeholder="Filter by Status" />
               </SelectTrigger>
               <SelectContent>
-                {statuses.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {s.charAt(0).toUpperCase() + s.slice(1)}
-                  </SelectItem>
-                ))}
+                <SelectItem value="all">All</SelectItem>
+                {statuses.map((s) => {
+                  const statusName = s.name || s; // Fallback to s in case it's a string
+                  const statusKey = s.id ? `${s.id}-${statusName}` : statusName; // Use ID if available, fallback to name
+                  return (
+                    <SelectItem key={statusKey} value={statusName}>
+                      {String(statusName).charAt(0).toUpperCase() + String(statusName).slice(1)}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
 
@@ -343,7 +375,9 @@ export default function Leads() {
                     {lead.status === "new" && !lead.assignedTo ? (
                       <Badge className="bg-blue-600 text-white">NEW</Badge>
                     ) : (
-                      <Badge variant="outline">{lead.status}</Badge>
+                      <Badge variant="outline">
+                        {lead.status.charAt(0).toUpperCase() + lead.status.slice(1)}
+                      </Badge>
                     )}
                   </TableCell>
                   <TableCell>{users.find(u => u.id === lead.assignedTo)?.name || lead.assignedTo}</TableCell>
@@ -522,6 +556,46 @@ export default function Leads() {
                 </ul>
               </div>
 
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="status">
+          <div className="p-6 space-y-6">
+            <h2 className="text-xl font-semibold">Manage Lead Status</h2>
+            <div className="max-w-md space-y-3 border p-4 rounded-md">
+              <Input
+                placeholder="Add new status..."
+                value={newStatus}
+                onChange={(e) => setNewStatus(e.target.value)}
+              />
+              <Button onClick={addStatus}>Add Status</Button>
+
+              <ul className="mt-3 space-y-1">
+                {statuses.map((s) => (
+                  <li
+                    key={s.id}
+                    className="flex justify-between items-center border p-2 rounded"
+                  >
+                    <span>{s.name}</span>
+                    {s.name?.toLowerCase() !== "new" ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => deleteStatus(s.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">System</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+
+              <p className="text-xs text-muted-foreground">
+                Note: <strong>NEW</strong> status is system-defined and not editable.
+              </p>
             </div>
           </div>
         </TabsContent>
