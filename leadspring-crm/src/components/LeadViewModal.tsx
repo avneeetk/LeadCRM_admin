@@ -51,6 +51,7 @@ export function LeadViewModal({ lead, open, onOpenChange }: LeadViewModalProps) 
   const [notes, setNotes] = useState<any[]>([]);
   const [newNote, setNewNote] = useState("");
   const [notesOpen, setNotesOpen] = useState(false);
+  const [assignedToName, setAssignedToName] = useState<string | null>(null);
 
   // subscribe to leads/{leadId}/notes (server rules expect createdBy === auth.uid and content field)
   useEffect(() => {
@@ -75,6 +76,30 @@ export function LeadViewModal({ lead, open, onOpenChange }: LeadViewModalProps) 
 
     return () => unsub();
   }, [lead?.id]);
+
+  useEffect(() => {
+    if (!lead?.assignedTo) {
+      setAssignedToName(null);
+      return;
+    }
+
+    // If name already present on lead, use it
+    if (lead.assignedToName) {
+      setAssignedToName(lead.assignedToName);
+      return;
+    }
+
+    const fetchAssignedUser = async () => {
+      try {
+        const snap = await getDoc(doc(db, "users", lead.assignedTo));
+        setAssignedToName(snap.exists() ? snap.data()?.name ?? lead.assignedTo : lead.assignedTo);
+      } catch (e) {
+        setAssignedToName(lead.assignedTo);
+      }
+    };
+
+    fetchAssignedUser();
+  }, [lead?.assignedTo, lead?.assignedToName]);
 
   const handleAddNote = async () => {
     if (!newNote.trim() || !lead?.id) return;
@@ -165,7 +190,7 @@ export function LeadViewModal({ lead, open, onOpenChange }: LeadViewModalProps) 
               <User className="h-4 w-4 text-muted-foreground" />
               <div>
                 <p className="text-sm text-muted-foreground">Assigned To</p>
-                <p className="font-medium">{lead.assignedToName || lead.assignedTo || "Unassigned"}</p>
+                <p className="font-medium">{assignedToName || "Unassigned"}</p>
               </div>
             </div>
 

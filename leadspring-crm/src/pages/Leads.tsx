@@ -163,6 +163,8 @@ export default function Leads() {
         snap.docs.map(d => ({
           id: d.id,
           name: String(d.data().name || "").toLowerCase(),
+          autoHide: d.data().autoHide ?? false,
+          autoHideAfterHours: d.data().autoHideAfterHours ?? 48,
         }))
       );
     });
@@ -274,6 +276,8 @@ export default function Leads() {
     if (!newStatus.trim()) return;
     await addDoc(collection(db, "lead_statuses"), {
       name: newStatus,
+      autoHide: false,
+      autoHideAfterHours: 48,
       createdAt: serverTimestamp(),
     });
     setNewStatus("");
@@ -575,19 +579,61 @@ export default function Leads() {
                 {statuses.map((s) => (
                   <li
                     key={s.id}
-                    className="flex justify-between items-center border p-2 rounded"
+                    className="flex flex-col gap-2 border p-2 rounded"
                   >
-                    <span>{s.name}</span>
-                    {s.name?.toLowerCase() !== "new" ? (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => deleteStatus(s.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">System</span>
+                    <div className="flex justify-between items-center">
+                      <span>{s.name}</span>
+
+                      {s.name !== "new" ? (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => deleteStatus(s.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">System</span>
+                      )}
+                    </div>
+
+                    {s.name !== "new" && (
+                      <div className="flex items-center gap-3 text-sm">
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={s.autoHide}
+                            onChange={async (e) => {
+                              await updateDoc(doc(db, "lead_statuses", s.id), {
+                                autoHide: e.target.checked,
+                                updatedAt: serverTimestamp(),
+                              });
+                            }}
+                          />
+                          Auto-hide
+                        </label>
+
+                        {s.autoHide && (
+                          <Input
+                            type="number"
+                            min={1}
+                            className="w-24"
+                            value={s.autoHideAfterHours}
+                            onChange={async (e) => {
+                              await updateDoc(doc(db, "lead_statuses", s.id), {
+                                autoHideAfterHours: Number(e.target.value),
+                                updatedAt: serverTimestamp(),
+                              });
+                            }}
+                          />
+                        )}
+
+                        {s.autoHide && (
+                          <span className="text-xs text-muted-foreground">
+                            hours
+                          </span>
+                        )}
+                      </div>
                     )}
                   </li>
                 ))}

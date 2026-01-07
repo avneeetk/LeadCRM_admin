@@ -36,46 +36,52 @@ service cloud.firestore {
   // LIST queries (collection reads)
   allow list: if signedIn() && (
     isAdmin() ||
-    (isAgent() && request.auth.uid == resource.data.assignedTo)
+    isAgent() 
   );
 
   // GET a single document
-  allow get: if signedIn() && (
-    isAdmin() ||
-    request.auth.uid == resource.data.assignedTo
-  );
+ allow get: if signedIn() && (
+  isAdmin() ||
+  resource.data.assignedUsers.hasAny([request.auth.uid])
+);
 
   // CREATE
   allow create: if isAdmin() || isAgent();
 
   // UPDATE
   allow update: if
-    (
-      isAdmin() // admin can update everything
-    ) || (
-      // Agent can update only safe fields on their own leads
-      isAgent() &&
-      request.auth.uid == resource.data.assignedTo &&
-      request.resource.data.diff(resource.data).changedKeys().hasOnly([
-        "status",
-        "tag",
-        "updatedAt",
-        "address",
-        "city",
-        "state",
-        "country",
-        "email",
-        "phone",
-        "name",
-        "remarks",
-        "followUpDate",
-        "followUpTime"
-      ])
-    );
+  // ✅ Admin: full control
+  isAdmin()
+
+  // ✅ Assigned subuser: limited safe updates
+  || (
+    isAgent()
+    && resource.data.assignedUsers.hasAny([request.auth.uid])
+    && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+      "status",
+      "tag",
+      "updatedAt",
+      "statusChangedAt",
+      "followUpDate",
+      "followUpTime",
+      "remarks"
+    ])
+  );
 
   // DELETE only admin
   allow delete: if isAdmin();
 }
+
+    // ------------------------------------
+    // LEAD STATUSES
+    // ------------------------------------
+    match /lead_statuses/{statusId} {
+      // Allow read if user is authenticated
+      allow read: if signedIn();
+      
+      // Allow write only for admin users
+      allow write: if isAdmin();
+    }
 
     // 🔹 Subcollection notes under a lead
     match /leads/{leadId}/notes/{noteId} {
