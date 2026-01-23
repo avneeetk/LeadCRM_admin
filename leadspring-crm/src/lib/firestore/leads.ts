@@ -74,6 +74,43 @@ export async function updateLead(id: string, lead: Partial<any>) {
 }
 
 /**
+ * Update lead STATUS with history (ADMIN ONLY)
+ * This ensures status changes always appear in lead history.
+ */
+export async function updateLeadStatusWithHistory({
+  leadId,
+  oldStatus,
+  newStatus,
+  adminUid,
+  adminName,
+}: {
+  leadId: string;
+  oldStatus: string;
+  newStatus: string;
+  adminUid: string;
+  adminName: string;
+}) {
+  const leadRef = doc(db, "leads", leadId);
+
+  // 1. Update lead status
+  await updateDoc(leadRef, {
+    status: newStatus,
+    statusChangedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  // 2. Write history entry
+  await addDoc(collection(leadRef, "history"), {
+    type: "STATUS_CHANGE",
+    oldValue: oldStatus,
+    newValue: newStatus,
+    byUid: adminUid,
+    byName: adminName,
+    createdAt: serverTimestamp(),
+  });
+}
+
+/**
  * Delete a lead
  */
 export async function deleteLead(id: string) {

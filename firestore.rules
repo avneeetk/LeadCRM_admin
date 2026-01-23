@@ -29,6 +29,22 @@ service cloud.firestore {
     }
 
     // ------------------------------------
+    // ADMIN NOTIFICATIONS
+    // ------------------------------------
+    match /admin_notifications/{id} {
+      // Admin can view notifications
+      allow list, read: if signedIn() && isAdmin();
+
+      // Admin can ONLY update the `read` field
+      allow update: if signedIn()
+        && isAdmin()
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['read']);
+
+      // Creation only via Cloud Functions (Admin SDK bypasses rules)
+      allow create, delete: if false;
+    }
+
+    // ------------------------------------
     // LEADS
     // ------------------------------------
     match /leads/{leadId} {
@@ -39,61 +55,73 @@ service cloud.firestore {
     isAgent() 
   );
 
-  // GET a single document
- allow get: if signedIn() && (
-  isAdmin() ||
-  resource.data.assignedUsers.hasAny([request.auth.uid])
-);
+  // GET a single lead
+  allow get: if signedIn() && (
+    // Admin can read all
+    isAdmin()
+
+    // Assigned user can read (array-based)
+    || (
+      resource.data.assignedTo is list
+      && resource.data.assignedTo.hasAny([request.auth.uid])
+    )
+
+    // ✅ Safe read during transfer lifecycle
+    // Prevents PERMISSION_DENIED on active listeners
+    || (
+      request.auth != null
+      && request.time < request.resource.updateTime
+    )
+  );
 
   // CREATE
   allow create: if isAdmin() || isAgent();
 
   // UPDATE
   allow update: if
-  // ✅ Admin: full control
-  isAdmin()
+    // ✅ Admin: full control
+    isAdmin()
 
-  // ✅ Assigned subuser: limited safe updates
-  || (
-    isAgent()
-    && resource.data.assignedUsers.hasAny([request.auth.uid])
-    && request.resource.data.diff(resource.data).changedKeys().hasOnly([
-      "status",
-      "tag",
-      "updatedAt",
-      "statusChangedAt",
-      "followUpDate",
-      "followUpTime",
-      "remarks"
-    ])
-  );
+    // ✅ Assigned subuser: limited safe updates (status, follow-up, remarks)
+    || (
+      isAgent()
+      && resource.data.assignedTo is list
+      && resource.data.assignedTo.hasAny([request.auth.uid])
+      && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+        "status",
+        "tag",
+        "updatedAt",
+        "statusChangedAt",
+        "followUpDate",
+        "followUpTime",
+        "remarks"
+      ])
+    )
+
+    // ✅ Subuser TRANSFER (REPLACE assignedTo with ONE user)
+    || (
+      isAgent()
+      && request.resource.data.diff(resource.data).changedKeys()
+          .hasOnly(["assignedTo", "updatedAt"])
+      && request.resource.data.assignedTo is list
+      && request.resource.data.assignedTo.size() == 1
+    );
 
   // DELETE only admin
   allow delete: if isAdmin();
-}
-
-    // ------------------------------------
-    // LEAD STATUSES
-    // ------------------------------------
-    match /lead_statuses/{statusId} {
-      // Allow read if user is authenticated
-      allow read: if signedIn();
-      
-      // Allow write only for admin users
-      allow write: if isAdmin();
-    }
 
     // 🔹 Subcollection notes under a lead
-    match /leads/{leadId}/notes/{noteId} {
+    match /notes/{noteId} {
       // 🟢 READ:
       // Agents can read notes if they are assigned to this lead
       // Admins can read all
       allow read: if signedIn() &&
         (
-          // admin users can read all notes
-          isAdmin() ||
-          // assigned agent can read
-          get(/databases/$(database)/documents/leads/$(leadId)).data.assignedTo == request.auth.uid
+          isAdmin()
+          || (
+            get(/databases/$(database)/documents/leads/$(leadId)).data.assignedTo is list
+            && get(/databases/$(database)/documents/leads/$(leadId)).data.assignedTo.hasAny([request.auth.uid])
+          )
         );
 
       // 🟢 CREATE:
@@ -103,7 +131,11 @@ service cloud.firestore {
       //   - "text" exists and is a string
       allow create: if signedIn() &&
         (
-          get(/databases/$(database)/documents/leads/$(leadId)).data.assignedTo == request.auth.uid
+          isAdmin()
+          || (
+            get(/databases/$(database)/documents/leads/$(leadId)).data.assignedTo is list
+            && get(/databases/$(database)/documents/leads/$(leadId)).data.assignedTo.hasAny([request.auth.uid])
+          )
         )
         && request.resource.data.keys().hasAll(['text', 'createdAt', 'by'])
         && request.resource.data.by == request.auth.uid
@@ -146,23 +178,83 @@ service cloud.firestore {
       // Agents may update their own legacy notes (only message field)
       allow update: if signedIn() && resource.data.sender_id == request.auth.uid && request.resource.data.keys().hasOnly(['message']);
     }
+  }
+
+    // ------------------------------------
+    // LEAD HISTORY (ADMIN + ACTOR)
+    // ------------------------------------
+    match /leads/{leadId}/history/{historyId} {
+      allow read: if
+        isAdmin()
+        || (
+          request.auth != null
+          && resource.data.hiddenForUid == request.auth.uid
+        );
+
+      allow create: if signedIn()
+        && (
+          isAdmin()
+          || request.resource.data.by == request.auth.uid
+        );
+
+      allow update, delete: if false;
+    }
+    // ------------------------------------
+    // LEAD STATUSES
+    // ------------------------------------
+    match /lead_statuses/{statusId} {
+      // Allow read if user is authenticated
+      allow read: if signedIn();
+      
+      // Allow write only for admin users
+      allow write: if isAdmin();
+    }
 
     // ------------------------------------
     // ATTENDANCE
     // ------------------------------------
     match /attendance/{attendanceId} {
-  // 🔍 Read - Any signed-in user can read attendance
-  allow read: if signedIn();
+  allow list: if signedIn();
+  // 🔍 Read - Only admin or owner can read attendance
+  allow read: if signedIn() && (
+    isAdmin()
+    || resource.data.userId == request.auth.uid
+    || resource.data.user_id == request.auth.uid
+  );
 
   // ➕ Create
-  // Agents can create:
-  //  - punch-in attendance records
-  //  - leave / half-day requests
+  // ✅ Admin can create attendance for ANY user (manual attendance from CRM)
+  // ✅ Agent can create ONLY for self (support both user_id and userId fields)
   allow create: if signedIn()
-    && request.resource.data.user_id == request.auth.uid
-    && request.resource.data.record_type in ["attendance", "leave"]
-    && (request.resource.data.start_date is timestamp || !('start_date' in request.resource.data))
-    && (request.resource.data.end_date is timestamp || !('end_date' in request.resource.data));
+    && (
+      // Admin can create for anyone
+      isAdmin()
+
+      // User can create only for self (support both field names)
+      || request.resource.data.userId == request.auth.uid
+      || request.resource.data.user_id == request.auth.uid
+    )
+    && request.resource.data.record_type in ["attendance","absent", "leave"]
+
+    // Attendance-specific validation
+    && (
+      request.resource.data.attendance_status == "present"
+        ? (
+            request.resource.data.punchInTime is timestamp
+            || request.resource.data.punch_in_time is timestamp
+          )
+        : true
+    )
+
+    // Leave-specific validation
+    && (
+      request.resource.data.record_type == "leave"
+        ? (
+            request.resource.data.start_date is timestamp
+            && request.resource.data.end_date is timestamp
+          )
+        : true
+    );
 
   // ✏️ Update
   allow update: if
@@ -171,7 +263,10 @@ service cloud.firestore {
 
     // ✅ Agent punch-in / punch-out updates ONLY
     || (
-      resource.data.user_id == request.auth.uid
+      (
+        resource.data.userId == request.auth.uid
+        || resource.data.user_id == request.auth.uid
+      )
       && request.resource.data.diff(resource.data).changedKeys().hasOnly([
         "punch_out_time",
         "punch_out_location",
@@ -208,11 +303,21 @@ service cloud.firestore {
           "dateOfBirth",
           "address",
           "active",
-          "updatedAt"
+          "updatedAt",
+          "fcmToken" // ✅ ADD THIS ONLY
         ]);
 
       // NOTE: agent/stat fields (assignedLeads, closedDeals, etc.) must NOT be writable by clients.
       // Those fields should be maintained by trusted server code (Cloud Functions) using the Admin SDK.
+    }
+
+    // ------------------------------------
+    // USER NOTIFICATIONS (SUB-USER APP)
+    // ------------------------------------
+    match /users/{userId}/notifications/{id} {
+      allow list: if signedIn() && request.auth.uid == userId;
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow write: if false; // only Cloud Functions
     }
 
     // ------------------------------------

@@ -59,7 +59,7 @@ export default function Login() {
               <Input
                 id="email"
                 type="email"
-                placeholder="admin@leadcrm.com"
+                placeholder="Enter your email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 disabled={isLoading}

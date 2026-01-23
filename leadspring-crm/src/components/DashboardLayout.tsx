@@ -35,10 +35,10 @@ export function DashboardLayout({ children, title, actions }: DashboardLayoutPro
               </div>
               {actions}
               <NotificationsDropdown />
-              <Avatar className="h-8 w-8">
+              {/* <Avatar className="h-8 w-8">
                 <AvatarImage src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.email}`} />
                 <AvatarFallback>{user?.name?.split(" ").map(n => n[0]).join("")}</AvatarFallback>
-              </Avatar>
+              </Avatar> */}
             </div>
           </header>
           <div className="flex-1 overflow-auto p-6">{children}</div>

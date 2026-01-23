@@ -1,4 +1,6 @@
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, collection, getDocs } from "firebase/firestore";
+import { Timestamp } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 import { db } from "@/lib/firebase";
 // src/pages/Attendance.tsx
 import { useState, useEffect } from "react";
@@ -109,12 +111,34 @@ export default function Attendance() {
   // Manual form
   const [form, setForm] = useState({
     name: "",
-    date: new Date(),
+    date: new Date(),          // used for present
+    fromDate: new Date(),      // used for leave
+    toDate: new Date(),        // used for leave
     punchIn: "",
     punchOut: "",
     location: "",
     status: "present",
   });
+
+  // Agents list and selected agent for manual attendance
+  const [agents, setAgents] = useState<any[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState<any>(null);
+  // Fetch agents for admin selection
+  useEffect(() => {
+    const fetchAgents = async () => {
+      try {
+        const snap = await getDocs(collection(db, "users"));
+        const list = snap.docs.map(d => ({
+          id: d.id,
+          ...d.data(),
+        }));
+        setAgents(list);
+      } catch (e) {
+        console.error("Failed to fetch agents", e);
+      }
+    };
+    fetchAgents();
+  }, []);
 
   // REALTIME ATTENDANCE
   useEffect(() => {
@@ -197,8 +221,9 @@ export default function Attendance() {
               let status = "present";
 
               const attendanceStatus =
-                d.attendance_status ||
-                d.attendanceStatus ||
+                d.attendance_status ??
+                d.attendanceStatus ??
+                d.status ??
                 "present";
 
               const approvalStatus =
@@ -221,7 +246,7 @@ export default function Attendance() {
               } else if (approvalStatus === "rejected") {
                 status = "rejected";
               } else {
-                status = "present";
+                status = attendanceStatus || "present";
               }
 
               return {
@@ -383,33 +408,111 @@ const exportXLS = () => {
   );
 };
 
-  // Add manual CRM entry
+  // Add manual CRM entry (aligned with Firestore expectations)
   const handleAdd = async () => {
-    if (!form.name || !form.punchIn || !form.location) {
-      toast.error("Please fill required fields");
+    if (!selectedAgent) {
+      toast.error("Please select an agent");
+      return;
+    }
+
+    if (form.status === "present") {
+      if (!form.punchIn || !form.location) {
+        toast.error("Punch in time and location are required for present attendance");
+        return;
+      }
+    }
+
+    // In handleAdd, add this validation after the leave validation
+    if (form.status === "absent" && !form.date) {
+      toast.error("Date is required for absent");
+      return;
+    }
+
+    if (form.status === "leave") {
+      if (!form.fromDate || !form.toDate) {
+        toast.error("Leave start and end dates are required");
+        return;
+      }
+    }
+
+    const auth = getAuth();
+    const user = auth.currentUser;
+
+    if (!user) {
+      toast.error("Not logged in");
       return;
     }
 
     try {
+      // Build proper DateTime objects
+      let punchInDateTime: Date | null = null;
+      let punchOutDateTime: Date | null = null;
+
+      if (form.status === "present") {
+        punchInDateTime = new Date(
+          `${format(form.date, "yyyy-MM-dd")} ${form.punchIn}`
+        );
+
+        punchOutDateTime = form.punchOut
+          ? new Date(`${format(form.date, "yyyy-MM-dd")} ${form.punchOut}`)
+          : null;
+      }
+
+      // Admin-created leave is auto-approved by design
       await addAttendance({
-        name: form.name,
-        punchInTime: form.date,
-        punchOutTime: form.punchOut ? new Date(`${format(form.date, "yyyy-MM-dd")} ${form.punchOut}`) : null,
-        location: form.location,
-        status: form.status,
+        userId: selectedAgent.id,
+        name: selectedAgent.name || form.name,
+        created_by: user.uid,
+
+        punchInTime: punchInDateTime
+          ? Timestamp.fromDate(punchInDateTime)
+          : null,
+        punchOutTime: punchOutDateTime
+          ? Timestamp.fromDate(punchOutDateTime)
+          : null,
+
+        start_date:
+          form.status === "leave"
+            ? Timestamp.fromDate(form.fromDate)
+            : form.status === "absent"
+              ? Timestamp.fromDate(form.date)
+              : null,
+        end_date:
+          form.status === "leave"
+            ? Timestamp.fromDate(form.toDate)
+            : form.status === "absent"
+              ? Timestamp.fromDate(form.date)
+              : null,
+
+        punch_in_address:
+          form.status === "present" ? form.location : null,
+
+        attendance_status: form.status,
+
+        approval_status:
+          form.status === "leave"
+            ? "approved"
+            : "none",
+
+        record_type: form.status === "leave" ? "leave" : "attendance",
       });
 
       toast.success("Attendance added");
       setAddModal(false);
+
       setForm({
         name: "",
         date: new Date(),
+        fromDate: new Date(),
+        toDate: new Date(),
         punchIn: "",
         punchOut: "",
         location: "",
         status: "present",
       });
-    } catch {
+      setSelectedAgent(null);
+    } catch (e) {
+      console.error("Manual attendance add failed:", e);
       toast.error("Failed to add record");
     }
   };
@@ -468,10 +571,10 @@ const exportXLS = () => {
                     <SelectValue placeholder="Filter status" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
+                    {/* <SelectItem value="all">All</SelectItem> */}
                     <SelectItem value="present">Present</SelectItem>
-                    <SelectItem value="absent">Absent</SelectItem>
-                    <SelectItem value="on-break">On Break</SelectItem>
+                    <SelectItem value="absent">Absent</SelectItem> 
+                    <SelectItem value="leave">Leave</SelectItem>
                   </SelectContent>
                 </Select>
 
@@ -721,55 +824,27 @@ const exportXLS = () => {
           </DialogHeader>
 
           <div className="grid gap-4 py-4">
-            <Label>Employee Name *</Label>
-            <Input
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-            />
-
-            <Label>Date *</Label>
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline">
-                  <CalendarIcon className="mr-2" />
-                  {format(form.date, "PPP")}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent>
-                <Calendar
-                  mode="single"
-                  selected={form.date}
-                  onSelect={(d) => d && setForm({ ...form, date: d })}
-                />
-              </PopoverContent>
-            </Popover>
-
-            <Label>Punch In *</Label>
-            <Input
-              value={form.punchIn}
-              onChange={(e) => setForm({ ...form, punchIn: e.target.value })}
-              placeholder="HH:MM"
-            />
-
-            <Label>Punch Out</Label>
-            <Input
-              value={form.punchOut}
-              onChange={(e) => setForm({ ...form, punchOut: e.target.value })}
-              placeholder="HH:MM"
-            />
-
-            <Label>Location *</Label>
+            <Label>Agent *</Label>
             <Select
-              value={form.location}
-              onValueChange={(v) => setForm({ ...form, location: v })}
+              value={selectedAgent?.id || ""}
+              onValueChange={(id) => {
+                const agent = agents.find(a => a.id === id);
+                setSelectedAgent(agent);
+                setForm(prev => ({
+                  ...prev,
+                  name: agent?.name || "",
+                }));
+              }}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select location" />
+                <SelectValue placeholder="Select agent" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="office">Office</SelectItem>
-                <SelectItem value="remote">Remote</SelectItem>
-                <SelectItem value="client">Client Site</SelectItem>
+                {agents.map(agent => (
+                  <SelectItem key={agent.id} value={agent.id}>
+                    {agent.name} ({agent.email})
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
 
@@ -782,9 +857,110 @@ const exportXLS = () => {
               <SelectContent>
                 <SelectItem value="present">Present</SelectItem>
                 <SelectItem value="absent">Absent</SelectItem>
-                <SelectItem value="on-break">On Break</SelectItem>
+                <SelectItem value="leave">Leave</SelectItem>
               </SelectContent>
             </Select>
+
+            {(form.status === "present" || form.status === "absent") && (
+              <>
+                <Label>Date *</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline">
+                      <CalendarIcon className="mr-2" />
+                      {format(form.date, "PPP")}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent>
+                    <Calendar
+                      mode="single"
+                      selected={form.date}
+                      onSelect={(d) => d && setForm({ ...form, date: d })}
+                    />
+                  </PopoverContent>
+                </Popover>
+
+                {form.status === "present" && (
+                  <>
+                    <Label>Punch In *</Label>
+                    <Input
+                      type="time"
+                      value={form.punchIn}
+                      onChange={(e) =>
+                        setForm({ ...form, punchIn: e.target.value })
+                      }
+                    />
+
+                    <Label>Punch Out</Label>
+                    <Input
+                      type="time"
+                      value={form.punchOut}
+                      onChange={(e) =>
+                        setForm({ ...form, punchOut: e.target.value })
+                      }
+                    />
+
+                    <Label>Location *</Label>
+                    <Select
+                      value={form.location}
+                      onValueChange={(v) => setForm({ ...form, location: v })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select location" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="office">Office</SelectItem>
+                        <SelectItem value="remote">Remote</SelectItem>
+                        <SelectItem value="client">Client Site</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </>
+                )}
+              </>
+            )}
+
+            {form.status === "leave" && (
+              <>
+                <Label>Leave From *</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline">
+                      <CalendarIcon className="mr-2" />
+                      {format(form.fromDate, "PPP")}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent>
+                    <Calendar
+                      mode="single"
+                      selected={form.fromDate}
+                      onSelect={(d) =>
+                        d && setForm({ ...form, fromDate: d })
+                      }
+                    />
+                  </PopoverContent>
+                </Popover>
+
+                <Label>Leave To *</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline">
+                      <CalendarIcon className="mr-2" />
+                      {format(form.toDate, "PPP")}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent>
+                    <Calendar
+                      mode="single"
+                      selected={form.toDate}
+                      disabled={(date) => date < form.fromDate}
+                      onSelect={(d) =>
+                        d && setForm({ ...form, toDate: d })
+                      }
+                    />
+                  </PopoverContent>
+                </Popover>
+              </>
+            )}
           </div>
 
           <DialogFooter>

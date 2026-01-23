@@ -23,7 +23,7 @@ const menuItems = [
   { title: "Team", url: "/team", icon: Users },
   { title: "Sales", url: "/sales", icon: DollarSign },
   { title: "Reports", url: "/reports", icon: BarChart3 },
-  { title: "Settings", url: "/settings", icon: Settings },
+  // { title: "Settings", url: "/settings", icon: Settings },
 ];
 
 export function AppSidebar() {
@@ -43,10 +43,10 @@ export function AppSidebar() {
       <SidebarContent>
         <SidebarGroup>
           <div className="flex items-center gap-2 px-4 py-6">
-            <div className="h-8 w-8 rounded-lg bg-primary flex items-center justify-center text-primary-foreground font-bold">
-              LC
+            <div className="h-8 w-10 rounded-lg bg-primary flex items-center justify-center text-primary-foreground font-bold border border-light-foreground">
+              EBS
             </div>
-            {!isCollapsed && <span className="font-semibold text-lg">LeadCRM</span>}
+            {!isCollapsed && <span className="font-semibold text-lg">EvineCRM</span>}
           </div>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -76,10 +76,10 @@ export function AppSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <div className="flex items-center gap-3 px-4 py-3 border-t">
-              <Avatar className="h-8 w-8">
+              {/* <Avatar className="h-8 w-8">
                 <AvatarImage src="https://api.dicebear.com/7.x/avataaars/svg?seed=admin" />
                 <AvatarFallback>AD</AvatarFallback>
-              </Avatar>
+              </Avatar> */}
               {!isCollapsed && (
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{user?.name}</p>

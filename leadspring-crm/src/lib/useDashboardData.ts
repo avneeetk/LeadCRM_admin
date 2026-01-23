@@ -1,253 +1,231 @@
-// src/lib/useDashboardData.ts
 import { useEffect, useMemo, useState } from "react";
-import { db, auth } from "@/lib/firebase";
+import { db } from "@/lib/firebase";
 import {
   collection,
-  onSnapshot,
-  query,
-  orderBy,
-  Timestamp,
-  DocumentData,
   getDocs,
-  limit
+  Timestamp,
 } from "firebase/firestore";
 
-// -----------------------------
-// Types
-// -----------------------------
-type FireTimestamp =
-  | Timestamp
-  | { seconds: number; nanoseconds: number }
-  | string
-  | Date
-  | null
-  | undefined;
+/* -------------------------------------------------------------------------- */
+/*                                   TYPES                                    */
+/* -------------------------------------------------------------------------- */
+
+type FireTs = Timestamp | Date | string | null | undefined;
 
 interface Lead {
   id: string;
   name?: string;
   phone?: string;
-  email?: string;
   status?: string;
-  assignedTo?: string;
-  createdAt?: FireTimestamp;
-  updatedAt?: FireTimestamp;
-  [k: string]: any;
-}
-
-interface Attendance {
-  id: string;
-  userId?: string;
-  status?: string;
-  punch_in_time?: FireTimestamp;
-  punch_out_time?: FireTimestamp;
-  [k: string]: any;
+  source?: string;
+  assignedTo?: string[]; // IMPORTANT: array
+  followUpDate?: string; // yyyy-mm-dd
+  createdAt?: FireTs;
 }
 
 interface User {
   id: string;
   name?: string;
-  email?: string;
   role?: string;
 }
 
-// -----------------------------
-// Timestamp Normalizer
-// -----------------------------
-function normalizeTimestamp(ts?: FireTimestamp): Date | null {
-  if (!ts) return null;
+/* -------------------------------------------------------------------------- */
+/*                              TIME NORMALIZER                               */
+/* -------------------------------------------------------------------------- */
 
-  if (typeof (ts as any)?.toDate === "function") return (ts as any).toDate();
+function toDate(ts?: FireTs): Date | null {
+  if (!ts) return null;
+  if (ts instanceof Date) return ts;
   if (typeof ts === "string") {
     const d = new Date(ts);
     return isNaN(d.getTime()) ? null : d;
   }
-  if (ts instanceof Date) return ts;
-  if (typeof ts === "object" && "seconds" in (ts as any)) {
-    return new Date((ts as any).seconds * 1000);
-  }
-
+  if (typeof (ts as any)?.toDate === "function") return (ts as any).toDate();
+  if ((ts as any)?.seconds) return new Date((ts as any).seconds * 1000);
   return null;
 }
 
-// -----------------------------
-// Hook
-// -----------------------------
-export function useDashboardData(timeRangeDays = 0) {
+/* -------------------------------------------------------------------------- */
+/*                                   HOOK                                     */
+/* -------------------------------------------------------------------------- */
+
+export function useDashboardData() {
   const [leads, setLeads] = useState<Lead[]>([]);
-  const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const cutoffDate =
-    timeRangeDays > 0
-      ? new Date(Date.now() - timeRangeDays * 24 * 60 * 60 * 1000)
-      : null;
+  const getAgentName = (uid?: string) => {
+    if (!uid) return "Unassigned";
+    return users.find((u) => u.id === uid)?.name || "Unknown";
+  };
+
+  /* ----------------------------- FETCH ONCE ----------------------------- */
 
   useEffect(() => {
-    if (!auth.currentUser) return; // 👈 prevents permission-denied
+    (async () => {
+      setLoading(true);
 
-    setLoading(true);
+      const [leadsSnap, usersSnap] = await Promise.all([
+        getDocs(collection(db, "leads")),
+        getDocs(collection(db, "users")),
+      ]);
 
-    // Leads (one-time fetch to reduce reads)
-    getDocs(query(collection(db, "leads"), orderBy("created_at", "desc"), limit(100)))
-      .then((snap) => {
-        const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Lead[];
+      setLeads(
+        leadsSnap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as Lead[]
+      );
 
-        const filtered = cutoffDate
-          ? arr.filter((l) => {
-              const created = normalizeTimestamp(l.createdAt ?? (l as any).created_at);
-              return created ? created >= cutoffDate : true;
-            })
-          : arr;
+      setUsers(
+        usersSnap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as User[]
+      );
 
-        setLeads(filtered);
-      });
-
-    // Attendance (FIXED: correct field)
-    getDocs(query(collection(db, "attendance"), orderBy("punch_in_time", "desc"), limit(200)))
-      .then((snap) => {
-        const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Attendance[];
-        setAttendance(arr);
-      });
-
-    // Users
-    getDocs(collection(db, "users")).then((snap) => {
-      const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as User[];
-      setUsers(arr);
       setLoading(false);
-    });
+    })();
+  }, []);
 
-    return () => {};
-  }, [timeRangeDays]);
+  /* -------------------------------------------------------------------------- */
+  /*                                    KPI                                     */
+  /* -------------------------------------------------------------------------- */
 
-  // -----------------------------
-  // KPI Data
-  // -----------------------------
   const kpiData = useMemo(() => {
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
+
     const totalLeads = leads.length;
-    const activeLeads = leads.filter((l) =>
-      ["new", "contacted", "follow-up", "hot"].includes(
-        (l.status || "").toLowerCase()
-      )
+
+    const newLeads7Days = leads.filter((l) => {
+      const c = toDate(l.createdAt);
+      return c && c >= sevenDaysAgo;
+    }).length;
+
+    const followUpsToday = leads.filter(
+      (l) =>
+        l.followUpDate === todayStr &&
+        l.status?.toLowerCase() !== "closed"
+    ).length;
+
+    const overdueFollowUps = leads.filter(
+      (l) =>
+        l.followUpDate &&
+        l.followUpDate < todayStr &&
+        l.status?.toLowerCase() !== "closed"
     ).length;
 
     const closedDeals = leads.filter(
-      (l) => (l.status || "").toLowerCase() === "closed"
+      (l) => l.status?.toLowerCase() === "closed"
     ).length;
 
     const lostLeads = leads.filter(
-      (l) => (l.status || "").toLowerCase() === "lost"
+      (l) => l.status?.toLowerCase() === "lost"
     ).length;
 
-    const employeesPresent = attendance.filter(
-      (a) => (a.status || "").toLowerCase() === "present"
-    ).length;
-
-    const qualifiedLeads = leads.filter(
-      (l) => (l.status || "").toLowerCase() === "hot"
-    ).length;
+    const activeAgents = new Set(
+      leads.flatMap((l) => l.assignedTo ?? [])
+    ).size;
 
     const conversionRate =
-      totalLeads > 0 ? (closedDeals / totalLeads) * 100 : 0;
-
-    const followUpRate =
-      totalLeads > 0 ? (activeLeads / totalLeads) * 100 : 0;
-
-    // Avg conversion time
-    const closedWithDates = leads.filter(
-      (l) =>
-        l.createdAt &&
-        l.updatedAt &&
-        (l.status || "").toLowerCase() === "closed"
-    );
-
-    const avgTimeToConversion =
-      closedWithDates.length > 0
-        ? Math.round(
-            closedWithDates.reduce((acc, l) => {
-              const created = normalizeTimestamp(l.createdAt ?? (l as any).created_at)?.getTime() || 0;
-              const updated = normalizeTimestamp(l.updatedAt)?.getTime() || 0;
-              return acc + (updated - created) / (1000 * 60 * 60 * 24);
-            }, 0) / closedWithDates.length
-          )
-        : 0;
+      totalLeads > 0 ? Math.round((closedDeals / totalLeads) * 100) : 0;
 
     return {
       totalLeads,
-      activeLeads,
+      newLeads7Days,
+      followUpsToday,
+      overdueFollowUps,
       closedDeals,
       lostLeads,
-      employeesPresent,
-      conversionRate: Math.round(conversionRate * 10) / 10,
-      qualifiedLeads,
-      followUpRate: Math.round(followUpRate * 10) / 10,
-      avgTimeToConversion,
+      activeAgents,
+      conversionRate,
     };
-  }, [leads, attendance]);
+  }, [leads]);
 
-  // -----------------------------
-  // Helper: Get agent name
-  // -----------------------------
-  const getAgentName = (id?: string) => {
-    if (!id) return "Unassigned";
-    return users.find((u) => u.id === id)?.name || "Unknown";
-  };
+  /* -------------------------------------------------------------------------- */
+  /*                                CHART DATA                                  */
+  /* -------------------------------------------------------------------------- */
 
-  // -----------------------------
-  // Leads by status chart
-  // -----------------------------
   const leadsByStatus = useMemo(() => {
     const map: Record<string, number> = {};
     leads.forEach((l) => {
-      const s = (l.status || "Unknown").toString();
+      const s = l.status || "Unknown";
       map[s] = (map[s] || 0) + 1;
     });
     return Object.entries(map).map(([status, count]) => ({ status, count }));
   }, [leads]);
 
-  // -----------------------------
-  // Leads by agent chart
-  // -----------------------------
   const leadsByAgent = useMemo(() => {
-    const map: Record<string, number> = {};
+  if (!Array.isArray(leads) || leads.length === 0) return [];
 
-    leads.forEach((l) => {
-      const key = l.assignedTo || "Unassigned";
+  const map: Record<string, number> = {};
+
+  leads.forEach((l) => {
+    let assigned: string[] = [];
+
+    if (Array.isArray(l.assignedTo)) {
+      assigned = l.assignedTo;
+    } else if (typeof l.assignedTo === "string" && l.assignedTo.trim()) {
+      assigned = [l.assignedTo];
+    } else {
+      assigned = ["Unassigned"];
+    }
+
+    assigned.forEach((uid) => {
+      const key = uid || "Unassigned";
       map[key] = (map[key] || 0) + 1;
     });
+  });
 
-    const colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
+  return Object.entries(map).map(([uid, count]) => ({
+    agent: uid === "Unassigned" ? "Unassigned" : getAgentName(uid),
+    leads: count,
+  }));
+}, [leads, users]);
 
-    return Object.keys(map).map((id, idx) => ({
-      agent: getAgentName(id === "Unassigned" ? undefined : id),
-      leads: map[id],
-      fill: colors[idx % colors.length],
-    }));
-  }, [leads, users]);
+  /* -------------------------------------------------------------------------- */
+  /*                               RECENT LEADS                                 */
+  /* -------------------------------------------------------------------------- */
 
-  // -----------------------------
-  // Recent Leads
-  // -----------------------------
   const recentLeads = useMemo(() => {
-    return leads
-      .map((l) => ({
-        ...l,
-        assignedToName: getAgentName(l.assignedTo),
-        _createdAt: normalizeTimestamp(l.createdAt ?? (l as any).created_at),
-      }))
+    return [...leads]
       .sort((a, b) => {
-        const ta = a._createdAt?.getTime() || 0;
-        const tb = b._createdAt?.getTime() || 0;
+        const ta = toDate(a.createdAt)?.getTime() || 0;
+        const tb = toDate(b.createdAt)?.getTime() || 0;
         return tb - ta;
+      })
+      .slice(0, 20)
+      .map((l) => {
+        let assignedIds: string[] = [];
+
+        if (Array.isArray(l.assignedTo)) {
+          assignedIds = l.assignedTo;
+        } else if (typeof l.assignedTo === "string" && l.assignedTo.trim()) {
+          assignedIds = [l.assignedTo];
+        }
+
+        return {
+          ...l,
+          assignedToName:
+            assignedIds.length > 0
+              ? assignedIds
+                  .map(
+                    (id) => users.find((u) => u.id === id)?.name || "Unknown"
+                  )
+                  .join(", ")
+              : "Unassigned",
+          _createdAt: toDate(l.createdAt),
+        };
       });
   }, [leads, users]);
 
   return {
+    loading,
     kpiData,
     leadsByStatus,
     leadsByAgent,
     recentLeads,
-    loading,
   };
 }

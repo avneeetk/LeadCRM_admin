@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Eye, Pencil, Plus, Trash2, ChevronLeft, ChevronRight, MessageSquare } from "lucide-react";
+import { Eye, Pencil, Plus, Trash2, ChevronLeft, ChevronRight, MessageSquare, AlertTriangle } from "lucide-react";
 import { db } from "@/lib/firebase";
 import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, getDocs, query, where } from "firebase/firestore";
 import { toast } from "sonner";
@@ -33,7 +33,7 @@ interface Lead {
   email: string;
   source: string;
   status: string;
-  assignedTo: string;
+  assignedTo: string[];
   createdAt: any;
   updatedAt?: any;
   purpose?: string;
@@ -44,6 +44,49 @@ interface Lead {
   remarks?: string;
   notesCount?: number;
 }
+
+const STATUS_COLORS = [
+  "slate",
+  "gray",
+  "red",
+  "orange",
+  "amber",
+  "yellow",
+  "lime",
+  "green",
+  "emerald",
+  "teal",
+  "cyan",
+  "sky",
+  "blue",
+  "indigo",
+  "violet",
+  "purple",
+  "fuchsia",
+  "pink",
+  "rose",
+];
+
+const STATUS_COLOR_MAP: Record<string, string> = {
+  slate: "#475569",
+  gray: "#6b7280",
+  red: "#dc2626",
+  orange: "#ea580c",
+  amber: "#d97706",
+  yellow: "#ca8a04",
+  lime: "#65a30d",
+  green: "#16a34a",
+  emerald: "#059669",
+  teal: "#0d9488",
+  cyan: "#0891b2",
+  sky: "#0284c7",
+  blue: "#2563eb",
+  violet: "#7c3aed",
+  purple: "#b57ee8ff",
+  fuchsia: "#c026d3",
+  pink: "#db2777",
+  rose: "#e11d48",
+};
 
 interface NotesBadgeProps {
   leadId: string;
@@ -110,7 +153,15 @@ export default function Leads() {
         const leadsData: Lead[] = await Promise.all(
           snap.docs.map(async (docSnap) => {
             const data = docSnap.data();
+            // --- Safe normalization for assignedTo ---
+            const normalizedAssignedTo = Array.isArray(data.assignedTo)
+              ? data.assignedTo
+              : typeof data.assignedTo === "string"
+                ? [data.assignedTo]
+                : [];
             const leadData: Lead = {
+              ...data, // spread FIRST so legacy fields cannot override later
+
               id: docSnap.id,
               name: data.name || data.raw_payload?.name || "",
               phone: data.phone || data.raw_payload?.phone || "",
@@ -118,7 +169,10 @@ export default function Leads() {
               city: data.city || data.raw_payload?.city || "",
               source: data.source || data.raw_payload?.source || "",
               status: String(data.status || "new").toLowerCase(),
-              assignedTo: data.assignedTo || "",
+
+              // ✅ authoritative normalized value
+              assignedTo: normalizedAssignedTo,
+
               createdAt: data.createdAt || data.created_at || null,
               updatedAt: data.updatedAt || data.updated_at || null,
               purpose: data.purpose || "",
@@ -126,7 +180,6 @@ export default function Leads() {
               state: data.state || "",
               country: data.country || "",
               remarks: data.remarks || "",
-              ...data,
             };
             // Get notes count for each lead
             try {
@@ -159,15 +212,16 @@ export default function Leads() {
     });
     // Statuses listener
     const unsubStatuses = onSnapshot(collection(db, "lead_statuses"), (snap) => {
-      setStatuses(
-        snap.docs.map(d => ({
-          id: d.id,
-          name: String(d.data().name || "").toLowerCase(),
-          autoHide: d.data().autoHide ?? false,
-          autoHideAfterHours: d.data().autoHideAfterHours ?? 48,
-        }))
-      );
-    });
+  setStatuses(
+    snap.docs.map(d => ({
+      id: d.id,
+      name: String(d.data().name || "").toLowerCase(),
+      color: d.data().color || "gray",
+      autoHide: d.data().autoHide ?? false,
+      autoHideAfterHours: d.data().autoHideAfterHours ?? 48,
+    }))
+  );
+});
     // Users loader
     (async () => {
       const snapUsers = await getDocs(collection(db, "users"));
@@ -199,7 +253,15 @@ export default function Leads() {
   const handleSaveLead = async (updatedLead: Lead) => {
     try {
       const ref = doc(db, "leads", updatedLead.id);
-      await updateDoc(ref, { ...updatedLead, updatedAt: serverTimestamp() });
+      await updateDoc(ref, {
+        ...updatedLead,
+        assignedTo: Array.isArray(updatedLead.assignedTo)
+          ? updatedLead.assignedTo
+          : updatedLead.assignedTo
+            ? [updatedLead.assignedTo]
+            : [],
+        updatedAt: serverTimestamp(),
+      });
       toast.success("Lead updated successfully");
     } catch (err) {
       console.error("Error updating lead:", err);
@@ -227,7 +289,8 @@ export default function Leads() {
       lead.email?.toLowerCase().includes(q) ||
       lead.source?.toLowerCase().includes(q) ||
       lead.status?.toLowerCase().includes(q) ||
-      lead.assignedTo?.toLowerCase().includes(q) ||
+      (Array.isArray(lead.assignedTo) &&
+        lead.assignedTo.some((uid) => uid.toLowerCase().includes(q))) ||
       lead.purpose?.toLowerCase().includes(q) ||
       lead.city?.toLowerCase().includes(q) ||
       lead.state?.toLowerCase().includes(q) ||
@@ -376,15 +439,45 @@ export default function Leads() {
                   <TableCell>{lead.email}</TableCell>
                   <TableCell>{lead.source}</TableCell>
                   <TableCell>
-                    {lead.status === "new" && !lead.assignedTo ? (
-                      <Badge className="bg-blue-600 text-white">NEW</Badge>
-                    ) : (
-                      <Badge variant="outline">
-                        {lead.status.charAt(0).toUpperCase() + lead.status.slice(1)}
-                      </Badge>
-                    )}
+                    {(() => {
+                      if (lead.status === "new") {
+                        return <Badge className="bg-blue-600 text-white">NEW</Badge>;
+                      }
+
+                      const statusMeta = statuses.find(
+                        (s) => s.name === lead.status
+                      );
+
+                      const color = statusMeta?.color || "gray";
+
+                      return (
+                        <Badge
+                          style={{ backgroundColor: STATUS_COLOR_MAP[color] || STATUS_COLOR_MAP.gray }}
+                          className="text-white capitalize"
+                        >
+                          {lead.status}
+                        </Badge>
+                      );
+                    })()}
                   </TableCell>
-                  <TableCell>{users.find(u => u.id === lead.assignedTo)?.name || lead.assignedTo}</TableCell>
+                  <TableCell>
+                    {(() => {
+                      const names = lead.assignedTo
+                        .map(uid => users.find(u => u.id === uid)?.name)
+                        .filter(Boolean);
+
+                      return names.length > 0 ? (
+                        names.join(", ")
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium
+                                         border border-dashed border-orange-400
+                                         text-orange-600 rounded-md bg-orange-50">
+                          <AlertTriangle className="h-3 w-3" />
+                          Unassigned
+                        </span>
+                      );
+                    })()}
+                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
                       <NotesBadge 
@@ -528,7 +621,12 @@ export default function Leads() {
                 <ul className="mt-3 space-y-1">
                   {sources.map((s) => (
                     <li key={s.id} className="flex justify-between items-center border p-2 rounded">
-                      <span>{s.name}</span>
+                     <Badge
+                       style={{ backgroundColor: STATUS_COLOR_MAP[s.color] || STATUS_COLOR_MAP.gray }}
+                       className="text-white capitalize"
+                     >
+                       {s.name}
+                     </Badge>
                       <Button variant="ghost" size="icon" onClick={() => deleteSource(s.id)}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -582,7 +680,12 @@ export default function Leads() {
                     className="flex flex-col gap-2 border p-2 rounded"
                   >
                     <div className="flex justify-between items-center">
-                      <span>{s.name}</span>
+                      <Badge
+                        style={{ backgroundColor: STATUS_COLOR_MAP[s.color] || STATUS_COLOR_MAP.gray }}
+                        className="text-white capitalize"
+                      >
+                        {s.name}
+                      </Badge>
 
                       {s.name !== "new" ? (
                         <Button
@@ -598,43 +701,72 @@ export default function Leads() {
                     </div>
 
                     {s.name !== "new" && (
-                      <div className="flex items-center gap-3 text-sm">
-                        <label className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={s.autoHide}
-                            onChange={async (e) => {
-                              await updateDoc(doc(db, "lead_statuses", s.id), {
-                                autoHide: e.target.checked,
-                                updatedAt: serverTimestamp(),
-                              });
-                            }}
-                          />
-                          Auto-hide
-                        </label>
-
-                        {s.autoHide && (
-                          <Input
-                            type="number"
-                            min={1}
-                            className="w-24"
-                            value={s.autoHideAfterHours}
-                            onChange={async (e) => {
-                              await updateDoc(doc(db, "lead_statuses", s.id), {
-                                autoHideAfterHours: Number(e.target.value),
-                                updatedAt: serverTimestamp(),
-                              });
-                            }}
-                          />
-                        )}
-
-                        {s.autoHide && (
-                          <span className="text-xs text-muted-foreground">
-                            hours
-                          </span>
-                        )}
-                      </div>
-                    )}
+  <div>
+    <div className="flex items-center gap-3 text-sm flex-wrap">
+      <label className="text-xs text-muted-foreground">Color</label>
+      <Select
+        value={s.color}
+        onValueChange={async (value) => {
+          await updateDoc(doc(db, "lead_statuses", s.id), {
+            color: value,
+            updatedAt: serverTimestamp(),
+          });
+        }}
+      >
+        <SelectTrigger className="w-[170px]">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent className="max-h-72">
+          {STATUS_COLORS.map((c) => (
+            <SelectItem key={c} value={c}>
+              <div className="flex items-center gap-2">
+                <span
+                  className="h-3 w-3 rounded-full border border-gray-300"
+                  style={{ backgroundColor: STATUS_COLOR_MAP[c] }}
+                />
+                <span className="capitalize">{c}</span>
+              </div>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+    <div>
+      <div className="flex items-center gap-2 text-sm mt-2">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={s.autoHide}
+            onChange={async (e) => {
+              await updateDoc(doc(db, "lead_statuses", s.id), {
+                autoHide: e.target.checked,
+                updatedAt: serverTimestamp(),
+              });
+            }}
+          />
+          Auto-hide
+        </label>
+        {s.autoHide && (
+          <>
+            <Input
+              type="number"
+              min={1}
+              className="w-24"
+              value={s.autoHideAfterHours}
+              onChange={async (e) => {
+                await updateDoc(doc(db, "lead_statuses", s.id), {
+                  autoHideAfterHours: Number(e.target.value),
+                  updatedAt: serverTimestamp(),
+                });
+              }}
+            />
+            <span className="text-xs text-muted-foreground">hours</span>
+          </>
+        )}
+      </div>
+    </div>
+  </div>
+)}
                   </li>
                 ))}
               </ul>

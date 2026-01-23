@@ -18,13 +18,18 @@ import { collection, getDocs, query, orderBy, limit } from "firebase/firestore";
 // 🧠 Utility function for aggregations
 const getLeadStats = (leads: any[]) => {
   const total = leads.length;
-  const contacted = leads.filter((l) => l.status === "contacted").length;
-  const converted = leads.filter((l) => l.status === "closed" || l.status === "converted").length;
-  const newLeads = leads.filter((l) => l.status === "new").length;
-  const followups = leads.filter((l) => l.status === "follow-up").length;
-  const lost = leads.filter((l) => l.status === "lost").length;
+  const contacted = leads.filter((l) => {
+    const status = (l.status || "").toLowerCase();
+    return status === "contacted" || status === "follow-up";
+  }).length;
+  const converted = leads.filter((l) => {
+    const status = (l.status || "").toLowerCase();
+    return status === "closed" || status === "converted";
+  }).length;
+  const newLeads = leads.filter((l) => (l.status || "").toLowerCase() === "new").length;
+  const lost = leads.filter((l) => (l.status || "").toLowerCase() === "lost").length;
   const conversionRate = total ? ((converted / total) * 100).toFixed(1) : "0.0";
-  return { total, contacted, converted, newLeads, followups, lost, conversionRate };
+  return { total, contacted, converted, newLeads, lost, conversionRate };
 };
 
 export default function Reports() {
@@ -34,6 +39,7 @@ export default function Reports() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [leadStats, setLeadStats] = useState<any>({});
   const [loading, setLoading] = useState(true);
+  const [usersMap, setUsersMap] = useState<Record<string, string>>({});
 
   // Pagination states
   const [leadPage, setLeadPage] = useState(1);
@@ -44,10 +50,11 @@ export default function Reports() {
     const loadData = async () => {
       setLoading(true);
       try {
-        const [leadsSnap, attendanceSnap, invoicesSnap] = await Promise.all([
+        const [leadsSnap, attendanceSnap, invoicesSnap, usersSnap] = await Promise.all([
           getDocs(query(collection(db, "leads"), orderBy("createdAt", "desc"), limit(500))),
           getDocs(query(collection(db, "attendance"), orderBy("punch_in_time", "desc"), limit(500))),
           getDocs(query(collection(db, "invoices"), orderBy("createdAt", "desc"), limit(500))),
+          getDocs(collection(db, "users")),
         ]);
 
         const parseTimestamps = (docs: any[]) =>
@@ -63,10 +70,30 @@ export default function Reports() {
             return { id: d.id, ...parsedData };
           });
 
-        const leadsData = parseTimestamps(leadsSnap.docs);
+        const leadsDataRaw = parseTimestamps(leadsSnap.docs);
+        // Normalize createdAt from createdAt or created_at
+        const leadsData = leadsDataRaw.map((lead) => {
+          let createdAtDate: Date | null = null;
+          if (lead.createdAt instanceof Date) {
+            createdAtDate = lead.createdAt;
+          } else if (lead.created_at instanceof Date) {
+            createdAtDate = lead.created_at;
+          }
+          return { ...lead, createdAt: createdAtDate };
+        });
+
         const attendanceData = parseTimestamps(attendanceSnap.docs);
         const invoicesData = parseTimestamps(invoicesSnap.docs);
 
+        // Build users mapping from uid to name
+        const usersData = usersSnap.docs.map((d) => d.data());
+        const map: Record<string, string> = {};
+        usersSnap.docs.forEach((doc) => {
+          const userData = doc.data();
+          map[doc.id] = userData.name || doc.id;
+        });
+
+        setUsersMap(map);
         setLeads(leadsData);
         setAttendance(attendanceData);
         setInvoices(invoicesData);
@@ -96,7 +123,6 @@ export default function Reports() {
   const statusWiseData = [
     { status: "New", count: leadStats.newLeads || 0 },
     { status: "Contacted", count: leadStats.contacted || 0 },
-    { status: "Follow-Up", count: leadStats.followups || 0 },
     { status: "Converted", count: leadStats.converted || 0 },
     { status: "Lost", count: leadStats.lost || 0 },
   ];
@@ -126,6 +152,16 @@ export default function Reports() {
         </div>
       </DashboardLayout>
     );
+
+  // Helper to compute duration in HH:mm
+  const computeDuration = (start: Date, end: Date) => {
+    const diffMs = end.getTime() - start.getTime();
+    if (diffMs < 0) return "-";
+    const diffMins = Math.floor(diffMs / 60000);
+    const hours = Math.floor(diffMins / 60);
+    const minutes = diffMins % 60;
+    return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
+  };
 
   return (
     <DashboardLayout title="Reports">
@@ -183,15 +219,20 @@ export default function Reports() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {paginatedAttendance.map((rec) => (
-                    <TableRow key={rec.id}>
-                      <TableCell>{rec.name}</TableCell>
-                      <TableCell>{rec.date instanceof Date ? rec.date.toLocaleDateString() : rec.date}</TableCell>
-                      <TableCell>{rec.punchIn || "-"}</TableCell>
-                      <TableCell>{rec.punchOut || "-"}</TableCell>
-                      <TableCell>{rec.duration || "In progress"}</TableCell>
-                    </TableRow>
-                  ))}
+                  {paginatedAttendance.map((rec) => {
+                    const punchInTime = rec.punch_in_time instanceof Date ? rec.punch_in_time : null;
+                    const punchOutTime = rec.punch_out_time instanceof Date ? rec.punch_out_time : null;
+                    const duration = punchInTime && punchOutTime ? computeDuration(punchInTime, punchOutTime) : "In progress";
+                    return (
+                      <TableRow key={rec.id}>
+                        <TableCell>{rec.name}</TableCell>
+                        <TableCell>{rec.date instanceof Date ? rec.date.toLocaleDateString() : rec.date}</TableCell>
+                        <TableCell>{punchInTime ? punchInTime.toLocaleTimeString() : "-"}</TableCell>
+                        <TableCell>{punchOutTime ? punchOutTime.toLocaleTimeString() : "-"}</TableCell>
+                        <TableCell>{duration}</TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
 
@@ -253,11 +294,11 @@ export default function Reports() {
                       <TableCell>{lead.source}</TableCell>
                       <TableCell>{lead.dealPrice || "-"}</TableCell>
                       <TableCell><StatusBadge status={lead.status} /></TableCell>
-                      <TableCell>{lead.assignedTo || "-"}</TableCell>
+                      <TableCell>{lead.assignedTo ? usersMap[lead.assignedTo] || lead.assignedTo : "-"}</TableCell>
                       <TableCell>
                         {lead.createdAt instanceof Date
                           ? lead.createdAt.toLocaleDateString()
-                          : lead.createdAt || "-"}
+                          : "-"}
                       </TableCell>
                     </TableRow>
                   ))}

@@ -7,11 +7,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Country, State, City } from "country-state-city";
 import { db } from "@/lib/firebase";
-import { collection, getDocs } from "firebase/firestore";
+import { collection, getDocs, addDoc, serverTimestamp, doc } from "firebase/firestore";
 import { toast } from "sonner";
 import type { Lead } from "@/lib/mockData";
 import { listenSources, listenPurposes } from "@/lib/firestore/lookups";
 import { listenLeadStatuses } from "@/lib/firestore/leadStatus";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface LeadEditModalProps {
   lead: Lead | null;
@@ -21,8 +22,27 @@ interface LeadEditModalProps {
 }
 
 export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModalProps) {
-  const [formData, setFormData] = useState<any>(lead);
+  // Initialize with default empty values that will be overridden by lead data
+  const [formData, setFormData] = useState<Partial<Lead>>({
+    name: '',
+    phone: '',
+    email: '',
+    source: '',
+    status: '',
+    country: '',
+    state: '',
+    city: '',
+    address: '',
+    purpose: '',
+    remarks: '',
+    assignedTo: [],
+    ...(lead || {})  // Spread lead data to override defaults if it exists
+  });
   const [agents, setAgents] = useState<any[]>([]);
+  const [assignModalOpen, setAssignModalOpen] = useState(false);
+  const [selectedAgents, setSelectedAgents] = useState<string[]>(
+    Array.isArray(lead?.assignedTo) ? lead.assignedTo : []
+  );
   const [sources, setSources] = useState<any[]>([]);
   const [purposes, setPurposes] = useState<any[]>([]);
   const [statuses, setStatuses] = useState<any[]>([]);
@@ -30,10 +50,33 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
   const [cities, setCities] = useState<any[]>([]);
   const countries = Country.getAllCountries();
 
+  const { user } = useAuth();
 
   useEffect(() => {
-    if (lead) setFormData({ ...lead });
-  }, [lead]);
+    if (lead) {
+      // Only update form data if the lead ID has changed to prevent unnecessary re-renders
+      setFormData(prev => ({
+        // Keep existing values as fallbacks
+        ...prev,
+        // Spread all lead data to ensure all fields are included
+        ...lead,
+        // Ensure these fields are properly initialized
+        name: lead.name || '',
+        phone: lead.phone || '',
+        email: lead.email || '',
+        source: lead.source || '',
+        status: lead.status || '',
+        country: lead.country || '',
+        state: lead.state || '',
+        city: lead.city || '',
+        address: lead.address || '',
+        purpose: lead.purpose || '',
+        remarks: lead.remarks || '',
+        assignedTo: Array.isArray(lead.assignedTo) ? lead.assignedTo : []
+      }));
+      setSelectedAgents(Array.isArray(lead.assignedTo) ? lead.assignedTo : []);
+    }
+  }, [lead?.id]); // Only re-run if lead ID changes
 
   useEffect(() => {
     getDocs(collection(db, "users")).then((snap) => {
@@ -54,6 +97,8 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
     if (formData?.country) {
       const c = countries.find((co) => co.name === formData.country);
       if (c) setStates(State.getStatesOfCountry(c.isoCode));
+    } else {
+      setStates([]);
     }
   }, [formData?.country]);
 
@@ -62,13 +107,54 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
       const c = countries.find((co) => co.name === formData.country);
       const s = states.find((st) => st.name === formData.state);
       if (c && s) setCities(City.getCitiesOfState(c.isoCode, s.isoCode));
+    } else {
+      setCities([]);
     }
   }, [formData?.state]);
 
   if (!formData) return null;
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     onSave({ ...formData, updatedAt: new Date().toISOString() });
+
+    const historyRef = collection(db, "leads", lead.id, "history");
+
+    if (lead.status !== formData.status) {
+      await addDoc(historyRef, {
+        type: "STATUS_CHANGE",
+        message: `Status changed from ${lead.status} to ${formData.status}`,
+        oldValue: lead.status,
+        newValue: formData.status,
+        by: user?.id,
+        byName: user?.name,
+        createdAt: serverTimestamp(),
+      });
+    }
+
+    if (JSON.stringify(lead.assignedTo || []) !== JSON.stringify(formData.assignedTo || [])) {
+      await addDoc(historyRef, {
+        type: "ASSIGNMENT_CHANGE",
+        message: "Lead assignment updated",
+        oldValue: lead.assignedTo || [],
+        newValue: formData.assignedTo || [],
+        by: user?.id,
+        byName: user?.name,
+        createdAt: serverTimestamp(),
+      });
+    }
+
+    if ((lead.remarks || "") !== (formData.remarks || "")) {
+      await addDoc(historyRef, {
+        type: "REMARKS_UPDATE",
+        message: "Remarks updated",
+        oldValue: lead.remarks || "",
+        newValue: formData.remarks || "",
+        by: user?.id,
+        byName: user?.name,
+        createdAt: serverTimestamp(),
+      });
+    }
+
     toast.success("Lead updated successfully");
     onOpenChange(false);
   };
@@ -118,7 +204,10 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Status</Label>
-              <Select value={formData.status || ""} onValueChange={(v) => setFormData({ ...formData, status: v })}>
+              <Select 
+                value={formData.status || ''} 
+                onValueChange={(v) => setFormData(prev => ({ ...prev, status: v }))}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Select Status" />
                 </SelectTrigger>
@@ -144,16 +233,22 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
 
             <div>
               <Label>Assigned To</Label>
-              <Select value={formData.assignedTo} onValueChange={(v) => setFormData({ ...formData, assignedTo: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {agents.map((agent) => (
-                    <SelectItem key={agent.id} value={agent.id}>
-                      {agent.name || agent.email}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Button
+                variant="outline"
+                className="w-full justify-start"
+                onClick={() => setAssignModalOpen(true)}
+              >
+                {selectedAgents.length === 0
+                  ? "Assign users"
+                  : selectedAgents
+                      .map(
+                        (uid) =>
+                          agents.find((a) => a.id === uid)?.name ||
+                          agents.find((a) => a.id === uid)?.email ||
+                          uid
+                      )
+                      .join(", ")}
+              </Button>
             </div>
           </div>
 
@@ -161,7 +256,15 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
           <div className="grid grid-cols-3 gap-4">
             <div>
               <Label>Country</Label>
-              <Select value={formData.country} onValueChange={(v) => setFormData({ ...formData, country: v })}>
+              <Select 
+                value={formData.country || ''} 
+                onValueChange={(v) => setFormData(prev => ({ 
+                  ...prev, 
+                  country: v,
+                  state: '', // Reset state when country changes
+                  city: ''   // Reset city when country changes
+                }))}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {countries.map((c) => (
@@ -173,7 +276,15 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
 
             <div>
               <Label>State</Label>
-              <Select value={formData.state} onValueChange={(v) => setFormData({ ...formData, state: v })}>
+              <Select 
+                value={formData.state || ''} 
+                onValueChange={(v) => setFormData(prev => ({ 
+                  ...prev, 
+                  state: v,
+                  city: '' // Reset city when state changes
+                }))}
+                disabled={!formData.country}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {states.map((s) => (
@@ -185,7 +296,11 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
 
             <div>
               <Label>City</Label>
-              <Select value={formData.city} onValueChange={(v) => setFormData({ ...formData, city: v })}>
+              <Select 
+                value={formData.city || ''} 
+                onValueChange={(v) => setFormData(prev => ({ ...prev, city: v }))}
+                disabled={!formData.state}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {cities.map((c) => (
@@ -230,6 +345,60 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
           <Button onClick={handleSubmit}>Save Changes</Button>
         </DialogFooter>
       </DialogContent>
+      <Dialog open={assignModalOpen} onOpenChange={setAssignModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Assign Users</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+            {agents.map((agent) => {
+              const checked = selectedAgents.includes(agent.id);
+              return (
+                <label
+                  key={agent.id}
+                  className="flex items-center gap-3 p-2 rounded hover:bg-muted cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedAgents((prev) => [...prev, agent.id]);
+                      } else {
+                        setSelectedAgents((prev) =>
+                          prev.filter((id) => id !== agent.id)
+                        );
+                      }
+                    }}
+                  />
+                  <span>{agent.name || agent.email}</span>
+                </label>
+              );
+            })}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setAssignModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                setFormData({
+                  ...formData,
+                  assignedTo: selectedAgents,
+                });
+                setAssignModalOpen(false);
+              }}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 }
