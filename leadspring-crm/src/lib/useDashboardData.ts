@@ -45,6 +45,17 @@ function toDate(ts?: FireTs): Date | null {
   return null;
 }
 
+function normalizeStatus(status?: string) {
+  return status?.trim().toLowerCase() || "unknown";
+}
+
+function formatStatusLabel(status: string) {
+  return status
+    .split(" ")
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
 /* -------------------------------------------------------------------------- */
 /*                                   HOOK                                     */
 /* -------------------------------------------------------------------------- */
@@ -150,11 +161,16 @@ export function useDashboardData() {
 
   const leadsByStatus = useMemo(() => {
     const map: Record<string, number> = {};
+
     leads.forEach((l) => {
-      const s = l.status || "Unknown";
-      map[s] = (map[s] || 0) + 1;
+      const key = normalizeStatus(l.status);
+      map[key] = (map[key] || 0) + 1;
     });
-    return Object.entries(map).map(([status, count]) => ({ status, count }));
+
+    return Object.entries(map).map(([status, count]) => ({
+      status: formatStatusLabel(status),
+      count,
+    }));
   }, [leads]);
 
   const leadsByAgent = useMemo(() => {
