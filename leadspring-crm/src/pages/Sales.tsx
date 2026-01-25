@@ -1,6 +1,7 @@
 // src/pages/Sales.tsx
 
 import { useEffect, useState } from "react";
+import { useRef } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -41,18 +42,26 @@ export default function Sales() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [deleteInvoiceId, setDeleteInvoiceId] = useState<string | null>(null);
 
+  const [downloadInvoice, setDownloadInvoice] = useState<any | null>(null);
+  const handleDownloadInvoice = (invoice: any) => {
+    setDownloadInvoice(invoice);
+    setIsViewModalOpen(true);
+  };
+
   const emptyForm = {
     invoiceNo: "",
     issuedDate: new Date().toISOString().split("T")[0],
     leadName: "",
-    leadNumber: "",
+    clientGST: "",
     billingAddress: "",
-    shippingAddress: "",
     amount: "",
-    gst: "18",
+    gstType: "CGST_SGST" as "IGST" | "CGST_SGST",
+    igstRate: 18,
+    cgstRate: 9,
+    sgstRate: 9,
+    description: "",
     bankDetails:
       "Bank Name: HDFC Bank\nA/C No: 50200063151328\nIFSC: HDFC0000485\nBranch: Udyog Vihar, Gurugram",
-    description: "",
     notes: "Payment due within 30 days.",
     status: "active" as "active" | "paid" | "pending" | "overdue",
   };
@@ -77,7 +86,7 @@ export default function Sales() {
     const s = searchQuery.toLowerCase();
     const matchesSearch =
       inv.leadName?.toLowerCase().includes(s) ||
-      inv.leadNumber?.includes(searchQuery) ||
+      inv.clientGST?.toLowerCase().includes(s) ||
       inv.invoiceNo?.toLowerCase().includes(s);
     const matchesStatus = statusFilter === "all" || inv.status === statusFilter;
     return matchesSearch && matchesStatus;
@@ -101,7 +110,10 @@ export default function Sales() {
       return;
     }
     try {
-      await addInvoice(formData);
+      await addInvoice({
+        ...formData,
+        amount: Number(formData.amount),
+      });
       toast.success("Invoice created successfully");
       setIsCreateModalOpen(false);
       resetForm();
@@ -115,7 +127,10 @@ export default function Sales() {
   const handleEditInvoice = async () => {
     if (!selectedInvoice?.id) return toast.error("No invoice selected");
     try {
-      await updateInvoice(selectedInvoice.id, formData);
+      await updateInvoice(selectedInvoice.id, {
+        ...formData,
+        amount: Number(formData.amount),
+      });
       toast.success("Invoice updated successfully");
       setIsEditModalOpen(false);
       setSelectedInvoice(null);
@@ -242,6 +257,13 @@ export default function Sales() {
                       <Button
                         variant="ghost"
                         size="icon"
+                        onClick={() => handleDownloadInvoice(inv)}
+                      >
+                        <Download className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         onClick={() => {
                           setSelectedInvoice(inv);
                           setFormData({ ...inv });
@@ -352,11 +374,11 @@ export default function Sales() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Client Number</Label>
+                <Label>Client GST</Label>
                 <Input
-                  value={formData.leadNumber}
-                  onChange={(e) => setFormData({ ...formData, leadNumber: e.target.value })}
-                  placeholder="Enter client number"
+                  value={formData.clientGST}
+                  onChange={(e) => setFormData({ ...formData, clientGST: e.target.value })}
+                  placeholder="Enter client GSTIN"
                 />
               </div>
               <div>
@@ -379,14 +401,6 @@ export default function Sales() {
             </div>
 
             <div>
-              <Label>Shipping Address</Label>
-              <Textarea
-                value={formData.shippingAddress}
-                onChange={(e) => setFormData({ ...formData, shippingAddress: e.target.value })}
-              />
-            </div>
-
-            <div>
               <Label>Description</Label>
               <Textarea
                 value={formData.description}
@@ -394,14 +408,60 @@ export default function Sales() {
               />
             </div>
 
+            {/* GST Type and Rates */}
             <div>
-              <Label>GST (%)</Label>
-              <Input
-                type="number"
-                value={formData.gst}
-                onChange={(e) => setFormData({ ...formData, gst: e.target.value })}
-              />
+              <Label>GST Type</Label>
+              <Select
+                value={formData.gstType}
+                onValueChange={(v) => setFormData({ ...formData, gstType: v as any })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="CGST_SGST">CGST + SGST</SelectItem>
+                  <SelectItem value="IGST">IGST</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
+
+            {formData.gstType === "IGST" && (
+              <div>
+                <Label>IGST (%)</Label>
+                <Input
+                  type="number"
+                  value={formData.igstRate}
+                  onChange={(e) =>
+                    setFormData({ ...formData, igstRate: Number(e.target.value) })
+                  }
+                />
+              </div>
+            )}
+
+            {formData.gstType === "CGST_SGST" && (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>CGST (%)</Label>
+                  <Input
+                    type="number"
+                    value={formData.cgstRate}
+                    onChange={(e) =>
+                      setFormData({ ...formData, cgstRate: Number(e.target.value) })
+                    }
+                  />
+                </div>
+                <div>
+                  <Label>SGST (%)</Label>
+                  <Input
+                    type="number"
+                    value={formData.sgstRate}
+                    onChange={(e) =>
+                      setFormData({ ...formData, sgstRate: Number(e.target.value) })
+                    }
+                  />
+                </div>
+              </div>
+            )}
 
             <div>
               <Label>Bank Details</Label>
@@ -456,7 +516,16 @@ export default function Sales() {
       </Dialog>
 
       {/* Invoice View */}
-      <InvoiceViewModal invoice={selectedInvoice} open={isViewModalOpen} onOpenChange={setIsViewModalOpen} />
+      <InvoiceViewModal
+        invoice={downloadInvoice || selectedInvoice}
+        open={isViewModalOpen}
+        onOpenChange={(open) => {
+          setIsViewModalOpen(open);
+          if (!open) {
+            setDownloadInvoice(null);
+          }
+        }}
+      />
 
       {/* Delete Confirmation */}
       <AlertDialog open={!!deleteInvoiceId} onOpenChange={() => setDeleteInvoiceId(null)}>

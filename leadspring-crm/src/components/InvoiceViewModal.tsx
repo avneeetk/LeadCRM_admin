@@ -1,3 +1,5 @@
+import html2canvas from "html2canvas";
+import jsPDF from "jspdf";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -6,17 +8,18 @@ interface Invoice {
   id?: string;
   invoiceNo: string;
   leadName: string;
-  leadNumber?: string;
   issuedDate: string;
   amount?: string | number;
   billingAddress?: string;
-  shippingAddress?: string;
   bankDetails?: string;
   type?: "active" | "passive";
   description?: string;
-  gst?: string | number;
-  notes?: string;
   status?: string;
+  clientGST?: string;
+  gstType?: "IGST" | "CGST_SGST";
+  igstRate?: number;
+  cgstRate?: number;
+  sgstRate?: number;
 }
 
 interface InvoiceViewModalProps {
@@ -28,11 +31,71 @@ interface InvoiceViewModalProps {
 export function InvoiceViewModal({ invoice, open, onOpenChange }: InvoiceViewModalProps) {
   if (!invoice) return null;
 
-  // 🔹 Dynamic GST and total calculation
+  // 🔹 GST and total calculation (updated)
   const amount = Number(invoice.amount) || 0;
-  const gstRate = invoice.gst ? parseFloat(String(invoice.gst).replace(/[^0-9.]/g, "")) : 18;
-  const gstAmount = (amount * gstRate) / 100;
-  const totalAmount = amount + gstAmount;
+
+  const gstType = invoice.gstType || "CGST_SGST";
+  const igstRate = invoice.igstRate ?? 18;
+  const cgstRate = invoice.cgstRate ?? 9;
+  const sgstRate = invoice.sgstRate ?? 9;
+
+  const igstAmount = gstType === "IGST" ? (amount * igstRate) / 100 : 0;
+  const cgstAmount = gstType === "CGST_SGST" ? (amount * cgstRate) / 100 : 0;
+  const sgstAmount = gstType === "CGST_SGST" ? (amount * sgstRate) / 100 : 0;
+
+  const totalAmount = amount + igstAmount + cgstAmount + sgstAmount;
+
+  // Helper: number to words
+  const numberToWords = (num: number): string => {
+    const ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+      "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+    const tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+
+    if (num === 0) return "Zero";
+    if (num < 20) return ones[num];
+    if (num < 100) return tens[Math.floor(num / 10)] + " " + ones[num % 10];
+    if (num < 1000) return ones[Math.floor(num / 100)] + " Hundred " + numberToWords(num % 100);
+    if (num < 100000) return numberToWords(Math.floor(num / 1000)) + " Thousand " + numberToWords(num % 1000);
+    if (num < 10000000) return numberToWords(Math.floor(num / 100000)) + " Lakh " + numberToWords(num % 100000);
+    return numberToWords(Math.floor(num / 10000000)) + " Crore " + numberToWords(num % 10000000);
+  };
+
+  // --- PDF GENERATOR ---
+  const generateInvoicePDF = async (): Promise<jsPDF | null> => {
+    const element = document.getElementById("invoice-print");
+    if (!element) return null;
+
+    const canvas = await html2canvas(element, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: "#ffffff",
+    });
+
+    const imgData = canvas.toDataURL("image/png");
+    const pdf = new jsPDF("p", "mm", "a4");
+
+    const pdfWidth = 210;
+    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+
+    pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
+
+    return pdf;
+  };
+
+  // --- Download Handler ---
+  const handleDownloadPDF = async () => {
+    const pdf = await generateInvoicePDF();
+    if (!pdf) return;
+    pdf.save(`${invoice.invoiceNo}.pdf`);
+  };
+
+  // --- Print Handler (Preview) ---
+  const handlePrintPreview = async () => {
+    const pdf = await generateInvoicePDF();
+    if (!pdf) return;
+    const blobUrl = pdf.output("bloburl");
+    window.open(blobUrl, "_blank");
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -41,7 +104,7 @@ export function InvoiceViewModal({ invoice, open, onOpenChange }: InvoiceViewMod
           <DialogTitle>Invoice Preview</DialogTitle>
         </DialogHeader>
 
-        <div className="bg-background p-8 rounded-lg border">
+        <div id="invoice-print" className="bg-background p-8 rounded-lg border">
           {/* Header */}
           <div className="text-center mb-4">
             <h1 className="text-2xl font-bold">TAX INVOICE</h1>
@@ -64,8 +127,7 @@ export function InvoiceViewModal({ invoice, open, onOpenChange }: InvoiceViewMod
               <div className="space-y-1 text-sm">
                 <p><span className="font-semibold">Name:</span> {invoice.leadName}</p>
                 {invoice.billingAddress && <p><span className="font-semibold">Address:</span> {invoice.billingAddress}</p>}
-                {invoice.shippingAddress && <p><span className="font-semibold">Shipping:</span> {invoice.shippingAddress}</p>}
-                <p><span className="font-semibold">GSTIN:</span> {invoice.gst || "—"}</p>
+                <p><span className="font-semibold">GSTIN:</span> {invoice.clientGST || "—"}</p>
               </div>
             </div>
 
@@ -125,10 +187,30 @@ export function InvoiceViewModal({ invoice, open, onOpenChange }: InvoiceViewMod
                     <td className="py-2 font-semibold">Total Invoice Value</td>
                     <td className="text-right py-2">₹{amount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
                   </tr>
-                  <tr className="border-b">
-                    <td className="py-2">Add – GST @{gstRate}%</td>
-                    <td className="text-right py-2">₹{gstAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                  </tr>
+                  {gstType === "IGST" && (
+                    <tr className="border-b">
+                      <td className="py-2">Add – IGST @{igstRate}%</td>
+                      <td className="text-right py-2">
+                        ₹{igstAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  )}
+                  {gstType === "CGST_SGST" && (
+                    <>
+                      <tr className="border-b">
+                        <td className="py-2">Add – CGST @{cgstRate}%</td>
+                        <td className="text-right py-2">
+                          ₹{cgstAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                      <tr className="border-b">
+                        <td className="py-2">Add – SGST @{sgstRate}%</td>
+                        <td className="text-right py-2">
+                          ₹{sgstAmount.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    </>
+                  )}
                   <tr>
                     <td className="py-2 font-bold">Net Invoice Value</td>
                     <td className="text-right py-2 font-bold">
@@ -144,7 +226,7 @@ export function InvoiceViewModal({ invoice, open, onOpenChange }: InvoiceViewMod
           <div className="mb-6">
             <p className="text-sm">
               <span className="font-semibold">Rupees in words:</span>{" "}
-              {invoice.notes || "Rupees amount in words"}
+              {numberToWords(Math.round(totalAmount))} only
             </p>
           </div>
 
@@ -161,6 +243,11 @@ export function InvoiceViewModal({ invoice, open, onOpenChange }: InvoiceViewMod
             <div className="text-right">
               <p className="font-semibold mb-1">FOR EVINE BUSINESS SERVICES</p>
               <div className="mt-12 inline-block">
+                <img
+                  src="/evine_stamp.png"
+                  alt="Evine Stamp"
+                  className="w-32 ml-auto mb-2"
+                />
                 <div className="border-t-2 border-foreground pt-2 px-8">
                   <p className="font-semibold">Authorized Signatory</p>
                   <p className="text-sm">Narinder Singh</p>
@@ -187,7 +274,12 @@ export function InvoiceViewModal({ invoice, open, onOpenChange }: InvoiceViewMod
         </div>
 
         <div className="flex justify-end gap-2 mt-4">
-          <Button variant="outline" onClick={() => window.print()}>Print Invoice</Button>
+          <Button variant="outline" onClick={handlePrintPreview}>
+            Print
+          </Button>
+          <Button variant="outline" onClick={handleDownloadPDF}>
+            Download
+          </Button>
           <Button onClick={() => onOpenChange(false)}>Close</Button>
         </div>
       </DialogContent>
