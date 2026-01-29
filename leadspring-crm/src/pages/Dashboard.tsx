@@ -84,6 +84,12 @@ export default function Dashboard() {
     customFrom !== null || 
     customTo !== null;
 
+  const safeLeadsByAgent = useMemo(() => {
+    return leadsByAgent
+      .filter((a) => a.agent && a.agent !== "Unknown")
+      .filter((a) => typeof a.leads === "number" && a.leads > 0);
+  }, [leadsByAgent]);
+
   const filteredLeads = useMemo(() => {
     let filtered = recentLeads;
 
@@ -111,7 +117,12 @@ export default function Dashboard() {
 
     // Agent filter
     if (selectedAgents.length > 0) {
-      filtered = filtered.filter((lead) => selectedAgents.includes(lead.assignedToName));
+      filtered = filtered.filter(
+        (lead) =>
+          lead.assignedToName &&
+          lead.assignedToName !== "Unknown" &&
+          selectedAgents.includes(lead.assignedToName)
+      );
     }
 
     // Status filter
@@ -200,7 +211,7 @@ export default function Dashboard() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-48 max-h-60 overflow-auto">
-            {leadsByAgent.map(({ agent }) => (
+            {safeLeadsByAgent.map(({ agent }) => (
               <DropdownMenuCheckboxItem
                 key={agent}
                 checked={selectedAgents.includes(agent)}
@@ -288,7 +299,7 @@ export default function Dashboard() {
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
                 <Pie
-                  data={leadsByAgent}
+                  data={safeLeadsByAgent}
                   dataKey="leads"
                   nameKey="agent"
                   cx="50%"
@@ -297,7 +308,7 @@ export default function Dashboard() {
                   fill="#8884d8"
                   label
                 >
-                  {leadsByAgent.map((entry, index) => (
+                  {safeLeadsByAgent.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
@@ -335,7 +346,7 @@ export default function Dashboard() {
                   <TableCell>
                     <StatusBadge status={l.status} />
                   </TableCell>
-                  <TableCell>{l.assignedToName}</TableCell>
+                  <TableCell>{l.assignedToName && l.assignedToName !== "Unknown" ? l.assignedToName : "—"}</TableCell>
                   <TableCell>
                     {l._createdAt?.toLocaleDateString("en-IN")}
                   </TableCell>

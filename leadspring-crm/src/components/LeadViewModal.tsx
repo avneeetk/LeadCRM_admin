@@ -55,7 +55,10 @@ function renderHistoryText(entry: any, userNameMap: Record<string, string>) {
         Array.isArray(entry.assignedToNames)
           ? entry.assignedToNames.join(", ")
           : Array.isArray(entry.toUserIds)
-          ? entry.toUserIds.join(", ")
+          ? entry.toUserIds
+              .map((id: string) => userNameMap[id])
+              .filter(Boolean)
+              .join(", ")
           : "—"
       }`;
 
@@ -63,13 +66,19 @@ function renderHistoryText(entry: any, userNameMap: Record<string, string>) {
       const from =
         entry.fromName ??
         (Array.isArray(entry.fromUserIds)
-          ? entry.fromUserIds.join(", ")
+          ? entry.fromUserIds
+              .map((id: string) => userNameMap[id])
+              .filter(Boolean)
+              .join(", ")
           : "—");
       const to =
         entry.toName ??
-        entry.toUserId ??
+        (entry.toUserId ? (userNameMap[entry.toUserId] ?? null) : null) ??
         (Array.isArray(entry.toUserIds)
-          ? entry.toUserIds.join(", ")
+          ? entry.toUserIds
+              .map((id: string) => userNameMap[id])
+              .filter(Boolean)
+              .join(", ")
           : "—");
       return `Transferred from ${from} to ${to}`;
     }
@@ -86,11 +95,17 @@ function renderHistoryText(entry: any, userNameMap: Record<string, string>) {
     case "assignment_change": {
       const from =
         Array.isArray(entry.oldValue)
-          ? entry.oldValue.map((id: string) => userNameMap[id] ?? id).join(", ")
+          ? entry.oldValue
+              .map((id: string) => userNameMap[id])
+              .filter(Boolean)
+              .join(", ")
           : "—";
       const to =
         Array.isArray(entry.newValue)
-          ? entry.newValue.map((id: string) => userNameMap[id] ?? id).join(", ")
+          ? entry.newValue
+              .map((id: string) => userNameMap[id])
+              .filter(Boolean)
+              .join(", ")
           : "—";
       return `Assignment changed from ${from} → ${to}`;
     }
@@ -231,7 +246,7 @@ export function LeadViewModal({ lead, open, onOpenChange }: LeadViewModalProps) 
         const entries = await Promise.all(
           Array.from(ids).map(async (uid) => {
             const snap = await getDoc(doc(db, "users", uid));
-            return [uid, snap.exists() ? snap.data()?.name ?? uid : uid];
+            return [uid, snap.exists() ? snap.data()?.name ?? null : null];
           })
         );
 
@@ -257,15 +272,17 @@ export function LeadViewModal({ lead, open, onOpenChange }: LeadViewModalProps) 
 
     const fetchAssignedUsers = async () => {
       try {
-        const names = await Promise.all(
-          assigned.map(async (uid) => {
-            const snap = await getDoc(doc(db, "users", uid));
-            return snap.exists() ? snap.data()?.name ?? uid : uid;
-          })
-        );
+        const names = (
+          await Promise.all(
+            assigned.map(async (uid) => {
+              const snap = await getDoc(doc(db, "users", uid));
+              return snap.exists() ? snap.data()?.name ?? null : null;
+            })
+          )
+        ).filter(Boolean);
         setAssignedToNames(names);
       } catch (e) {
-        setAssignedToNames(assigned);
+        setAssignedToNames([]);
       }
     };
 

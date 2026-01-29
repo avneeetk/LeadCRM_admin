@@ -41,6 +41,32 @@ function fail(msg = "Internal server error") {
 }
 
 // --------------------------------------------------------------------------
+// 📞 Phone normalization helper (E.164 format for WhatsApp & calling)
+// --------------------------------------------------------------------------
+function normalizePhone(raw, defaultCountryCode = "91") {
+  if (!raw || typeof raw !== "string") return null;
+
+  const num = raw.replace(/\D/g, "");
+
+  // Indian 10-digit number
+  if (num.length === 10) {
+    return `+${defaultCountryCode}${num}`;
+  }
+
+  // With country code but missing +
+  if (num.length === 12 && num.startsWith(defaultCountryCode)) {
+    return `+${num}`;
+  }
+
+  // Already in international format
+  if (raw.startsWith("+") && num.length >= 10) {
+    return `+${num}`;
+  }
+
+  return null; // invalid or unsupported
+}
+
+// --------------------------------------------------------------------------
 // 🔔 Reusable helper for admin notifications
 // --------------------------------------------------------------------------
 async function createAdminNotification({ title, message, type, refId }) {
@@ -729,7 +755,7 @@ export const notifyAdminOnPunchOut = onDocumentUpdated(
 /*                             ✔ EXPORT CHECK                                 */
 /* -------------------------------------------------------------------------- */
 
-logger.info("LeadCRM Firebase Functions loaded (FINAL PATCHED).");
+
 
 
 /* -------------------------------------------------------------------------- */
@@ -772,7 +798,7 @@ export const magicbricksLeadWebhook = onRequest(
       const leadDoc = {
         // Core lead fields
         name: payload.name || "",
-        phone: payload.phone || "",
+        phone: normalizePhone(payload.phone),
         email: payload.email || "",
         city: payload.city || "",
         project: payload.project || "",
@@ -790,6 +816,10 @@ export const magicbricksLeadWebhook = onRequest(
         raw_source: "magicbricks",
         raw_payload: payload,
       };
+
+      if (!leadDoc.phone && payload.phone) {
+        logger.warn("Invalid phone received from Magicbricks", payload.phone);
+      }
 
       await db.collection("leads").add(leadDoc);
 

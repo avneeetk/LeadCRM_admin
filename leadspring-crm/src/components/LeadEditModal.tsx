@@ -55,6 +55,9 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
   useEffect(() => {
     if (lead) {
       // Only update form data if the lead ID has changed to prevent unnecessary re-renders
+      const validAgentIds = Array.isArray(lead.assignedTo)
+        ? lead.assignedTo.filter((id) => agents.some((a) => a.id === id))
+        : [];
       setFormData(prev => ({
         // Keep existing values as fallbacks
         ...prev,
@@ -72,11 +75,11 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
         address: lead.address || '',
         purpose: lead.purpose || '',
         remarks: lead.remarks || '',
-        assignedTo: Array.isArray(lead.assignedTo) ? lead.assignedTo : []
+        assignedTo: validAgentIds
       }));
-      setSelectedAgents(Array.isArray(lead.assignedTo) ? lead.assignedTo : []);
+      setSelectedAgents(validAgentIds);
     }
-  }, [lead?.id]); // Only re-run if lead ID changes
+  }, [lead?.id, agents]);
 
   useEffect(() => {
     getDocs(collection(db, "users")).then((snap) => {
@@ -238,16 +241,17 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
                 className="w-full justify-start"
                 onClick={() => setAssignModalOpen(true)}
               >
-                {selectedAgents.length === 0
-                  ? "Assign users"
-                  : selectedAgents
-                      .map(
-                        (uid) =>
-                          agents.find((a) => a.id === uid)?.name ||
-                          agents.find((a) => a.id === uid)?.email ||
-                          uid
-                      )
-                      .join(", ")}
+                {(() => {
+                  const resolvedAgents = selectedAgents
+                    .map((uid) => agents.find((a) => a.id === uid))
+                    .filter(Boolean);
+
+                  if (resolvedAgents.length === 0) return "Assign users";
+
+                  return resolvedAgents
+                    .map((agent) => agent.name || agent.email)
+                    .join(", ");
+                })()}
               </Button>
             </div>
           </div>
