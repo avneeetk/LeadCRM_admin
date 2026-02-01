@@ -14,6 +14,8 @@ interface KPICardProps {
   };
   variant?: "default" | "success" | "warning" | "destructive" | "info";
   helpText?: string;
+  className?: string;
+  onClick?: () => void;
 }
 
 const variantStyles = {
@@ -32,9 +34,12 @@ const iconVariantStyles = {
   info: "text-info",
 };
 
-export function KPICard({ title, value, icon: Icon, trend, variant = "default", helpText }: KPICardProps) {
+export function KPICard({ title, value, icon: Icon, trend, variant = "default", helpText, className, onClick }: KPICardProps) {
   return (
-    <Card className="overflow-hidden">
+    <Card 
+      className={cn("overflow-hidden", className)}
+      onClick={onClick}
+    >
       <CardContent className="p-6">
         <div className="flex items-start justify-between">
           <div className="space-y-2">

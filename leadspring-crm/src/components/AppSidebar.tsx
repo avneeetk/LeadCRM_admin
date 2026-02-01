@@ -42,8 +42,8 @@ export function AppSidebar() {
     <Sidebar collapsible="icon">
       <SidebarContent>
         <SidebarGroup>
-          <div className="flex items-center gap-2 px-4 py-6">
-            <div className="h-8 w-10 rounded-lg bg-primary flex items-center justify-center text-primary-foreground font-bold border border-light-foreground">
+          <div className={`flex items-center gap-2 px-4 py-6 ${isCollapsed ? 'justify-center' : ''}`}>
+            <div className="h-8 w-10 rounded-lg bg-primary flex items-center justify-center text-primary-foreground font-bold border border-light-foreground flex-shrink-0">
               EBS
             </div>
             {!isCollapsed && <span className="font-semibold text-lg">EvineCRM</span>}
@@ -52,7 +52,11 @@ export function AppSidebar() {
             <SidebarMenu>
               {menuItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild tooltip={item.title}>
+                  <SidebarMenuButton 
+                    asChild 
+                    tooltip={item.title}
+                    className={isCollapsed ? "ml-3" : ""}
+                  >
                     <NavLink
                       to={item.url}
                       className={({ isActive }) =>
@@ -61,8 +65,8 @@ export function AppSidebar() {
                           : "hover:bg-sidebar-accent/50"
                       }
                     >
-                      <item.icon className="h-5 w-5" />
-                      <span>{item.title}</span>
+                      <item.icon className="h-5 w-5 flex-shrink-0" />
+                      {!isCollapsed && <span>{item.title}</span>}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -75,7 +79,7 @@ export function AppSidebar() {
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <div className="flex items-center gap-3 px-4 py-3 border-t">
+            <div className={`flex items-center gap-3 px-4 py-3 border-t ${isCollapsed ? 'justify-between' : ''}`}>
               {/* <Avatar className="h-8 w-8">
                 <AvatarImage src="https://api.dicebear.com/7.x/avataaars/svg?seed=admin" />
                 <AvatarFallback>AD</AvatarFallback>
@@ -86,10 +90,17 @@ export function AppSidebar() {
                   <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
                 </div>
               )}
-              {!isCollapsed && (
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleLogout} title="Logout">
-                  <LogOut className="h-4 w-4" />
-                </Button>
+              {isCollapsed ? (
+                <div className="w-full flex justify-end px-3">
+                  <SidebarMenuButton tooltip="Logout" onClick={handleLogout}>
+                    <LogOut className="h-4 w-4 flex-shrink-0" />
+                  </SidebarMenuButton>
+                </div>
+              ) : (
+                <SidebarMenuButton tooltip="Logout" onClick={handleLogout}>
+                  <LogOut className="h-4 w-4 flex-shrink-0" />
+                  {!isCollapsed && <span>Logout</span>}
+                </SidebarMenuButton>
               )}
             </div>
           </SidebarMenuItem>

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -43,6 +44,8 @@ interface Lead {
   country?: string;
   remarks?: string;
   notesCount?: number;
+  clientEmail?: string;
+  requirement?: string;
 }
 
 const STATUS_COLORS = [
@@ -120,6 +123,7 @@ function NotesBadge({ leadId, onOpenNotes, count }: NotesBadgeProps) {
 }
 
 export default function Leads() {
+  const [searchParams] = useSearchParams();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -142,6 +146,51 @@ export default function Leads() {
   const [newSource, setNewSource] = useState("");
   const [newPurpose, setNewPurpose] = useState("");
   const [newStatus, setNewStatus] = useState("");
+
+  // 🔹 Check if URL parameters are present
+  const hasUrlFilters = searchParams.toString().length > 0;
+
+  // 🔹 Clear URL filters and navigate to clean leads page
+  const clearUrlFilters = () => {
+    window.history.pushState({}, '', '/leads');
+    setStatusFilter('all');
+    setSearchQuery('');
+    setCurrentPage(1);
+  };
+
+  // 🔹 Read URL parameters and apply filters on mount
+  useEffect(() => {
+    const filter = searchParams.get('filter');
+    const status = searchParams.get('status');
+    const range = searchParams.get('range');
+    const due = searchParams.get('due');
+    const groupBy = searchParams.get('groupBy');
+    const created = searchParams.get('created');
+
+    // Apply filter based on URL parameters
+    if (filter === 'all') {
+      setStatusFilter('all');
+    } else if (created === '7days') {
+      // Filter by creation date (last 7 days)
+      setStatusFilter('all'); // We'll handle this in the filtered leads logic
+    } else if (status) {
+      setStatusFilter(status);
+    } else if (status === 'Follow-up' && due === 'today') {
+      setStatusFilter('Follow-up');
+      // Additional logic for "due today" could be added here
+    } else if (status === 'Follow-up' && due === 'overdue') {
+      setStatusFilter('Follow-up');
+      // Additional logic for "overdue" could be added here
+    } else if (status === 'Closed') {
+      setStatusFilter('Closed');
+    } else if (groupBy === 'agent') {
+      // Logic for grouping by agent could be implemented here
+      setStatusFilter('all');
+    }
+
+    // Reset to first page when filters are applied
+    setCurrentPage(1);
+  }, [searchParams]);
 
   // 🔹 Real-time Firestore Sync
   useEffect(() => {
@@ -295,10 +344,47 @@ export default function Leads() {
       lead.city?.toLowerCase().includes(q) ||
       lead.state?.toLowerCase().includes(q) ||
       lead.country?.toLowerCase().includes(q);
-    const matchesStatus =
-      statusFilter === "all" ||
-      lead.status?.toLowerCase() === statusFilter.toLowerCase();
-    return matchesSearch && matchesStatus;
+
+    // Handle URL parameter filters
+    const created = searchParams.get('created');
+    const due = searchParams.get('due');
+    const status = searchParams.get('status');
+
+    // Creation date filtering (last 7 days)
+    let matchesCreatedDate = true;
+    if (created === '7days') {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
+      const leadCreatedAt = lead.createdAt?.toDate ? lead.createdAt.toDate() : new Date(lead.createdAt);
+      matchesCreatedDate = leadCreatedAt >= sevenDaysAgo;
+    }
+
+    // Status filtering
+    let matchesStatus = statusFilter === "all" || lead.status?.toLowerCase() === statusFilter.toLowerCase();
+    
+    // Override status filter if URL has specific status parameter
+    // BUT for overdue follow-ups, we should show ALL leads regardless of status (except closed)
+    if (status && due !== 'overdue') {
+      matchesStatus = lead.status?.toLowerCase() === status.toLowerCase();
+    } else if (due === 'overdue') {
+      // For overdue follow-ups, show all leads except closed ones
+      matchesStatus = lead.status?.toLowerCase() !== "closed";
+    }
+
+    // Follow-up date filtering for today/overdue
+    let matchesFollowUp = true;
+    if (due) {
+      const today = new Date().toISOString().slice(0, 10);
+      const followUpDate = lead.followUpDate;
+      
+      if (due === 'today') {
+        matchesFollowUp = followUpDate === today && lead.status?.toLowerCase() !== 'closed';
+      } else if (due === 'overdue') {
+        // Match dashboard logic exactly
+        matchesFollowUp = followUpDate && followUpDate < today && lead.status?.toLowerCase() !== 'closed';
+      }
+    }
+
+    return matchesSearch && matchesStatus && matchesCreatedDate && matchesFollowUp;
   });
 
   // 🔹 Pagination Logic
@@ -362,15 +448,28 @@ export default function Leads() {
         <TabsContent value="leads">
       <Card className="p-6">
         <div className="flex flex-wrap gap-4 justify-between items-center mb-6">
-          <Input
-            placeholder="Search by name, phone, or email..."
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              setCurrentPage(1);
-            }}
-            className="w-72"
-          />
+          <div className="flex items-center gap-3">
+            <Input
+              placeholder="Search by name, phone, or email..."
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="w-72"
+            />
+            {hasUrlFilters && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-blue-600 font-medium">
+                  {searchParams.get('created') === '7days' && 'Showing leads from last 7 days'}
+                  {searchParams.get('status') === 'Follow-up' && searchParams.get('due') === 'today' && 'Showing follow-ups due today'}
+                  {searchParams.get('status') === 'Follow-up' && searchParams.get('due') === 'overdue' && 'Showing overdue follow-ups (all statuses)'}
+                  {searchParams.get('status') === 'Closed' && 'Showing closed deals'}
+                  {searchParams.get('filter') === 'all' && 'Showing all leads'}
+                </span>
+              </div>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setCurrentPage(1); }}>
               <SelectTrigger className="w-[180px]">
@@ -416,9 +515,9 @@ export default function Leads() {
                 <TableHead>Name</TableHead>
                 <TableHead>Phone</TableHead>
                 <TableHead>Email</TableHead>
-                <TableHead>Source</TableHead>
-                <TableHead>Status</TableHead>
+                <TableHead>Requirement</TableHead>
                 <TableHead>Assigned To</TableHead>
+                <TableHead>Status</TableHead>
                 <TableHead>Notes</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead>Actions</TableHead>
@@ -436,8 +535,63 @@ export default function Leads() {
                     </div>
                   </TableCell>
                   <TableCell>{lead.phone}</TableCell>
-                  <TableCell>{lead.email}</TableCell>
-                  <TableCell>{lead.source}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-col text-sm">
+                      {lead.email ? (
+                        <a
+                          href={`mailto:${lead.email}`}
+                          className="text-blue-600 hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {lead.email}
+                        </a>
+                      ) : (
+                        <span>—</span>
+                      )}
+                      {lead.clientEmail && (
+                        <a
+                          href={`mailto:${lead.clientEmail}`}
+                          className="text-blue-600 hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {lead.clientEmail}
+                        </a>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell className="max-w-[220px]">
+                    <div className="group relative">
+                      <div className="line-clamp-2 text-sm cursor-help overflow-hidden">
+                        {lead.requirement || "—"}
+                      </div>
+                      {lead.requirement && (
+                        <div className="absolute z-50 hidden group-hover:block
+                                        bg-white border shadow-md rounded-md
+                                        p-3 text-sm text-gray-800
+                                        w-[280px] top-full mt-1 left-0">
+                          {lead.requirement}
+                        </div>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    {(() => {
+                      const names = lead.assignedTo
+                        .map(uid => users.find(u => u.id === uid)?.name)
+                        .filter(Boolean);
+
+                      return names.length > 0 ? (
+                        names.join(", ")
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium
+                                         border border-dashed border-orange-400
+                                         text-orange-600 rounded-md bg-orange-50">
+                          <AlertTriangle className="h-3 w-3" />
+                          Unassigned
+                        </span>
+                      );
+                    })()}
+                  </TableCell>
                   <TableCell>
                     {(() => {
                       if (lead.status === "new") {
@@ -457,24 +611,6 @@ export default function Leads() {
                         >
                           {lead.status}
                         </Badge>
-                      );
-                    })()}
-                  </TableCell>
-                  <TableCell>
-                    {(() => {
-                      const names = lead.assignedTo
-                        .map(uid => users.find(u => u.id === uid)?.name)
-                        .filter(Boolean);
-
-                      return names.length > 0 ? (
-                        names.join(", ")
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium
-                                         border border-dashed border-orange-400
-                                         text-orange-600 rounded-md bg-orange-50">
-                          <AlertTriangle className="h-3 w-3" />
-                          Unassigned
-                        </span>
                       );
                     })()}
                   </TableCell>

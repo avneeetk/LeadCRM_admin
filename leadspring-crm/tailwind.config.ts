@@ -99,5 +99,9 @@ export default {
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [require("tailwindcss-animate"),require("tailwindcss-line-clamp")],
+
+  future: {
+    hoverOnlyWhenSupported: true,
+  },
 } satisfies Config;

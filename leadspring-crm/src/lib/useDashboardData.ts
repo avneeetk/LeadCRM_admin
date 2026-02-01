@@ -136,9 +136,9 @@ export function useDashboardData() {
       (l) => l.status?.toLowerCase() === "lost"
     ).length;
 
-    const activeAgents = new Set(
-      leads.flatMap((l) => l.assignedTo ?? [])
-    ).size;
+    const activeAgents = users.filter(
+      (u) => u.role && (u.role === 'admin' || u.role === 'subuser') && u.active !== false
+    ).length;
 
     const conversionRate =
       totalLeads > 0 ? Math.round((closedDeals / totalLeads) * 100) : 0;

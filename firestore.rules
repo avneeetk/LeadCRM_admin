@@ -94,7 +94,10 @@ service cloud.firestore {
         "statusChangedAt",
         "followUpDate",
         "followUpTime",
-        "remarks"
+        "remarks",
+        "companyName",
+        "clientEmail",
+        "requirement"
       ])
     )
 

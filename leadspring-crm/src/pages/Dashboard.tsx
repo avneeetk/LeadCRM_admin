@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { KPICard } from "@/components/KPICard";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -50,6 +51,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const {
     loading,
     kpiData,
@@ -259,12 +261,48 @@ export default function Dashboard() {
 
       {/* KPI GRID */}
       <div className="grid gap-4 grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6">
-        <KPICard title="Total Leads" value={kpiData.totalLeads} icon={FileText} />
-        <KPICard title="New Leads (7d)" value={kpiData.newLeads7Days} icon={TrendingUp} />
-        <KPICard title="Follow-Ups Today" value={kpiData.followUpsToday} icon={Clock} />
-        <KPICard title="Overdue Follow-Ups" value={kpiData.overdueFollowUps} icon={XCircle} />
-        <KPICard title="Closed Deals" value={kpiData.closedDeals} icon={CheckCircle2} />
-        <KPICard title="Active Agents" value={kpiData.activeAgents} icon={Users} />
+        <KPICard 
+          title="Total Leads" 
+          value={kpiData.totalLeads} 
+          icon={FileText} 
+          className="cursor-pointer hover:shadow-md transition-shadow"
+          onClick={() => navigate("/leads?filter=all")}
+        />
+        <KPICard 
+          title="New Leads (7d)" 
+          value={kpiData.newLeads7Days} 
+          icon={TrendingUp} 
+          className="cursor-pointer hover:shadow-md transition-shadow"
+          onClick={() => navigate("/leads?created=7days")}
+        />
+        <KPICard 
+          title="Follow-Ups Today" 
+          value={kpiData.followUpsToday} 
+          icon={Clock} 
+          className="cursor-pointer hover:shadow-md transition-shadow"
+          onClick={() => navigate("/leads?status=Follow-up&due=today")}
+        />
+        <KPICard 
+          title="Overdue Follow-Ups" 
+          value={kpiData.overdueFollowUps} 
+          icon={XCircle} 
+          className="cursor-pointer hover:shadow-md transition-shadow"
+          onClick={() => navigate("/leads?status=Follow-up&due=overdue")}
+        />
+        <KPICard 
+          title="Closed Deals" 
+          value={kpiData.closedDeals} 
+          icon={CheckCircle2} 
+          className="cursor-pointer hover:shadow-md transition-shadow"
+          onClick={() => navigate("/leads?status=Closed")}
+        />
+        <KPICard 
+          title="Active Agents" 
+          value={kpiData.activeAgents} 
+          icon={Users} 
+          className="cursor-pointer hover:shadow-md transition-shadow"
+          onClick={() => navigate("/team")}
+        />
       </div>
 
       {/* CHARTS */}

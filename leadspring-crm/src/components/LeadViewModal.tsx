@@ -351,27 +351,78 @@ export function LeadViewModal({ lead, open, onOpenChange }: LeadViewModalProps) 
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
-                <Mail className="h-4 w-4 text-muted-foreground" />
-                <div>
-                  <p className="text-sm text-muted-foreground">Email</p>
-                  <p className="font-medium">{lead.email || "—"}</p>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex items-center gap-3">
+                  <Mail className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <p className="text-sm text-muted-foreground">Email</p>
+{lead.email ? (
+  <a
+    href={`mailto:${lead.email}`}
+    className="font-medium text-blue-600 hover:underline"
+    onClick={(e) => e.stopPropagation()}
+  >
+    {lead.email}
+  </a>
+) : (
+  <p className="font-medium">—</p>
+)}                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <Mail className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <p className="text-sm text-muted-foreground">Company Email</p>
+                    {lead.clientEmail ? (
+  <a
+    href={`mailto:${lead.clientEmail}`}
+    className="font-medium text-blue-600 hover:underline"
+    onClick={(e) => e.stopPropagation()}
+  >
+    {lead.clientEmail}
+  </a>
+) : (
+  <p className="font-medium">—</p>
+)}
+                  </div>
                 </div>
               </div>
 
+              {/* Company Name */}
               <div className="flex items-center gap-3">
-                <Tag className="h-4 w-4 text-muted-foreground" />
+                <User className="h-4 w-4 text-muted-foreground" />
                 <div>
-                  <p className="text-sm text-muted-foreground">Source</p>
-                  <Badge variant="outline">{lead.source || "—"}</Badge>
+                  <p className="text-sm text-muted-foreground">Company Name</p>
+                  <p className="font-medium">{lead.companyName || "—"}</p>
                 </div>
               </div>
+              {/* Requirement */}
+              {/* Requirement */}
+<div className="flex items-center gap-3">
+  <Tag className="h-4 w-4 text-muted-foreground" />
+  <div>
+    <p className="text-sm text-muted-foreground">Requirement</p>
+     <p className="font-medium line-clamp-2 break-words">
+       {lead.requirement || "—"}
+     </p>
+  </div>
+</div>
 
-              <div className="flex items-center gap-3">
-                <DollarSign className="h-4 w-4 text-muted-foreground" />
-                <div>
-                  <p className="text-sm text-muted-foreground">Budget</p>
-                  <p className="font-medium">{lead.budget ?? "—"}</p>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex items-center gap-3">
+                  <Tag className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <p className="text-sm text-muted-foreground">Source</p>
+                    <Badge variant="outline">{lead.source || "—"}</Badge>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <Tag className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <p className="text-sm text-muted-foreground">Purpose</p>
+                    <p className="font-medium">{lead.purpose || "—"}</p>
+                  </div>
                 </div>
               </div>
 
