@@ -41,7 +41,7 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
+    <div className="min-h-screen w-full flex items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1 text-center">
           <div className="flex justify-center mb-4">
@@ -49,7 +49,7 @@ export default function Login() {
               LC
             </div>
           </div>
-          <CardTitle className="text-2xl font-bold">LeadCRM</CardTitle>
+          <CardTitle className="text-2xl font-bold">Leads CRM</CardTitle>
           <CardDescription>Sign in to your account to continue</CardDescription>
         </CardHeader>
         <CardContent>

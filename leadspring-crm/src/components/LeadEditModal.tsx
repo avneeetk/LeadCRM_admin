@@ -29,9 +29,9 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
     email: '',
     source: '',
     status: '',
-    country: '',
-    state: '',
-    city: '',
+    // country: '',
+    // state: '',
+    // city: '',
     address: '',
     purpose: '',
     remarks: '',
@@ -46,9 +46,9 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
   const [sources, setSources] = useState<any[]>([]);
   const [purposes, setPurposes] = useState<any[]>([]);
   const [statuses, setStatuses] = useState<any[]>([]);
-  const [states, setStates] = useState<any[]>([]);
-  const [cities, setCities] = useState<any[]>([]);
-  const countries = Country.getAllCountries();
+  // const [states, setStates] = useState<any[]>([]);
+  // const [cities, setCities] = useState<any[]>([]);
+  // const countries = Country.getAllCountries();
 
   const { user } = useAuth();
 
@@ -69,9 +69,9 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
         email: lead.email || '',
         source: lead.source || '',
         status: lead.status || '',
-        country: lead.country || '',
-        state: lead.state || '',
-        city: lead.city || '',
+        // country: lead.country || '',
+        // state: lead.state || '',
+        // city: lead.city || '',
         address: lead.address || '',
         purpose: lead.purpose || '',
         remarks: lead.remarks || '',
@@ -96,24 +96,24 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
     };
   }, []);
 
-  useEffect(() => {
-    if (formData?.country) {
-      const c = countries.find((co) => co.name === formData.country);
-      if (c) setStates(State.getStatesOfCountry(c.isoCode));
-    } else {
-      setStates([]);
-    }
-  }, [formData?.country]);
+  // useEffect(() => {
+  //   if (formData?.country) {
+  //     const c = countries.find((co) => co.name === formData.country);
+  //     if (c) setStates(State.getStatesOfCountry(c.isoCode));
+  //   } else {
+  //     setStates([]);
+  //   }
+  // }, [formData?.country]);
 
-  useEffect(() => {
-    if (formData?.state) {
-      const c = countries.find((co) => co.name === formData.country);
-      const s = states.find((st) => st.name === formData.state);
-      if (c && s) setCities(City.getCitiesOfState(c.isoCode, s.isoCode));
-    } else {
-      setCities([]);
-    }
-  }, [formData?.state]);
+  // useEffect(() => {
+  //   if (formData?.state) {
+  //     const c = countries.find((co) => co.name === formData.country);
+  //     const s = states.find((st) => st.name === formData.state);
+  //     if (c && s) setCities(City.getCitiesOfState(c.isoCode, s.isoCode));
+  //   } else {
+  //     setCities([]);
+  //   }
+  // }, [formData?.state]);
 
   if (!formData) return null;
 
@@ -171,15 +171,36 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
 
         <div className="grid gap-4 py-4">
 
-          {/* NAME + PHONE */}
-          <div className="grid grid-cols-2 gap-4">
+          {/* NAME + PHONE + COMPANY NAME */}
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <Label>Name</Label>
-              <Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} />
+              <Input
+                value={formData.name}
+                onChange={(e) =>
+                  setFormData({ ...formData, name: e.target.value })
+                }
+              />
             </div>
+
             <div>
               <Label>Phone</Label>
-              <Input value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} />
+              <Input
+                value={formData.phone}
+                onChange={(e) =>
+                  setFormData({ ...formData, phone: e.target.value })
+                }
+              />
+            </div>
+
+            <div>
+              <Label>Company Name</Label>
+              <Input
+                value={formData.companyName || ""}
+                onChange={(e) =>
+                  setFormData({ ...formData, companyName: e.target.value })
+                }
+              />
             </div>
           </div>
 
@@ -256,7 +277,7 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
             </div>
           </div>
 
-          {/* COUNTRY / STATE / CITY */}
+          {/* COUNTRY / STATE / CITY
           <div className="grid grid-cols-3 gap-4">
             <div>
               <Label>Country</Label>
@@ -313,7 +334,7 @@ export function LeadEditModal({ lead, open, onOpenChange, onSave }: LeadEditModa
                 </SelectContent>
               </Select>
             </div>
-          </div>
+          </div> */}
 
           {/* ADDRESS */}
           <div>

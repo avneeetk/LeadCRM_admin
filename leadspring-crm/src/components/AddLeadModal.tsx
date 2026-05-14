@@ -8,7 +8,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { db } from "@/lib/firebase";
 import { collection, getDocs, addDoc, serverTimestamp } from "firebase/firestore";
-import { Country, State, City } from "country-state-city";
 import { listenSources, listenPurposes } from "@/lib/firestore/lookups";
 import { listenLeadStatuses } from "@/lib/firestore/leadStatus";
 
@@ -20,28 +19,24 @@ interface AddLeadModalProps {
 
 export function AddLeadModal({ open, onOpenChange, onAddLead }: AddLeadModalProps) {
   const [agents, setAgents] = useState<any[]>([]);
-  const [states, setStates] = useState<any[]>([]);
-  const [cities, setCities] = useState<any[]>([]);
+  // const [states, setStates] = useState<any[]>([]);
+  // const [cities, setCities] = useState<any[]>([]);
 
   const [formData, setFormData] = useState({
     name: "",
     contact: "",
     assignedTo: "",
     email: "",
+    companyName: "",
+    companyEmail: "",
+    requirement: "",
     purpose: "",
     source: "",
     status: "",
-    dealPrice: "",
-    address: "",
-    country: "",
-    countryCode: "",
-    state: "",
-    stateCode: "",
-    city: "",
     remarks: "",
   });
 
-  const countries = Country.getAllCountries();
+  // const countries = Country.getAllCountries();
 
   // 🔹 Fetch agents dynamically from Firestore
   useEffect(() => {
@@ -52,14 +47,14 @@ export function AddLeadModal({ open, onOpenChange, onAddLead }: AddLeadModalProp
   }, []);
 
   // 🔹 When country changes, fetch states
-  useEffect(() => {
-    if (formData.countryCode) {
-      const statesList = State.getStatesOfCountry(formData.countryCode);
-      setStates(statesList);
-      setCities([]);
-      setFormData((prev) => ({ ...prev, state: "", stateCode: "", city: "" }));
-    }
-  }, [formData.countryCode]);
+  // useEffect(() => {
+  //   if (formData.countryCode) {
+  //     const statesList = State.getStatesOfCountry(formData.countryCode);
+  //     setStates(statesList);
+  //     setCities([]);
+  //     setFormData((prev) => ({ ...prev, state: "", stateCode: "", city: "" }));
+  //   }
+  // }, [formData.countryCode]);
 
   const [sources, setSources] = useState([]);
   const [purposes, setPurposes] = useState([]);
@@ -77,13 +72,13 @@ export function AddLeadModal({ open, onOpenChange, onAddLead }: AddLeadModalProp
   }, []);
 
   // 🔹 When state changes, fetch cities
-  useEffect(() => {
-    if (formData.countryCode && formData.stateCode) {
-      const citiesList = City.getCitiesOfState(formData.countryCode, formData.stateCode);
-      setCities(citiesList);
-      setFormData((prev) => ({ ...prev, city: "" }));
-    }
-  }, [formData.stateCode]);
+  // useEffect(() => {
+  //   if (formData.countryCode && formData.stateCode) {
+  //     const citiesList = City.getCitiesOfState(formData.countryCode, formData.stateCode);
+  //     setCities(citiesList);
+  //     setFormData((prev) => ({ ...prev, city: "" }));
+  //   }
+  // }, [formData.stateCode]);
 
   const handleSubmit = async () => {
     if (!formData.name || !formData.contact || !formData.assignedTo || !formData.purpose || !formData.status || !formData.source) {
@@ -106,16 +101,12 @@ export function AddLeadModal({ open, onOpenChange, onAddLead }: AddLeadModalProp
         contact: "",
         assignedTo: "",
         email: "",
+        companyName: "",
+        companyEmail: "",
+        requirement: "",
         purpose: "",
         source: "",
         status: "",
-        dealPrice: "",
-        address: "",
-        country: "",
-        countryCode: "",
-        state: "",
-        stateCode: "",
-        city: "",
         remarks: "",
       });
     } catch (error) {
@@ -168,7 +159,7 @@ export function AddLeadModal({ open, onOpenChange, onAddLead }: AddLeadModalProp
           </div>
 
           {/* 🔹 Location Selectors */}
-          <div className="grid grid-cols-3 gap-4">
+          {/* <div className="grid grid-cols-3 gap-4">
             <div>
               <Label>Country</Label>
               <Select
@@ -228,6 +219,40 @@ export function AddLeadModal({ open, onOpenChange, onAddLead }: AddLeadModalProp
                 </SelectContent>
               </Select>
             </div>
+          </div> */}
+          
+          {/*company and other details*/}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label>Company Name</Label>
+              <Input
+                value={formData.companyName}
+                onChange={(e) =>
+                  setFormData({ ...formData, companyName: e.target.value })
+                }
+              />
+            </div>
+
+            <div>
+              <Label>Company Email</Label>
+              <Input
+                type="email"
+                value={formData.companyEmail}
+                onChange={(e) =>
+                  setFormData({ ...formData, companyEmail: e.target.value })
+                }
+              />
+            </div>
+          </div>
+
+          <div>
+            <Label>Requirement</Label>
+            <Textarea
+              value={formData.requirement}
+              onChange={(e) =>
+                setFormData({ ...formData, requirement: e.target.value })
+              }
+            />
           </div>
 
           {/* 🔹 Status + Source */}
@@ -250,11 +275,6 @@ export function AddLeadModal({ open, onOpenChange, onAddLead }: AddLeadModalProp
                 </SelectContent>
               </Select>
             </div>
-          </div>
-
-          <div>
-            <Label>Address</Label>
-            <Textarea value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })} />
           </div>
 
           <div>

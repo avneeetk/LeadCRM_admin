@@ -70,9 +70,9 @@ export default function Sales() {
 
   // 🔹 Real-time listener
   useEffect(() => {
-    const unsubOrVoid = listenInvoices(setInvoices);
+    const unsubOrVoid = listenInvoices(setInvoices, { realtime: true });
 
-    // Only call if it’s a function
+    // Only call if it's a function
     return () => {
       if (typeof unsubOrVoid === "function") {
         unsubOrVoid();
